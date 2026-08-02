@@ -1,6 +1,10 @@
-Given there's 20+ Discord webhook plugins available on the hub, which one to use?
+# Historical Dink comparison
 
-# Comparison Table
+This table is preserved from the upstream Dink documentation for historical
+reference. Plugin Hub offerings and features change over time, so it should
+not be treated as a current product comparison.
+
+## Comparison table
 
 | Criteria          | [Dink][1] | [Discord Loot Logger][2] | [Discord Rare Drop Notifier][3] | [Discord Notifications][4] | [Discord Death Notifications][5] | [Discord Collection Logger][6] | [Better Discord Loot Logger][7] | [Discord Level Notifications][8] | [Raid Shamer][9] | [Universal Discord Notifications][10] | [Discord Notifier][11] | [Clan Chat Webhooks][12] | [DropTracker][13] | [Discord Group Bank Notifications][14] | [Discord Screenshot][15] | [Discord Notifications/Split Tracker][16] | [GIM Bank Discord][17] | [Discord Chat Logger][18] | [MaxHitAlert][19] | [Handegg Discord Webhook][20] | [Discord Recruitment Notifier][21] |
 | ----------------- | --------- | ------------------------ | ------------------------------- | -------------------------- | -------------------------------- | ------------------------------ | ------------------------------- | -------------------------------- | ---------------- | ------------------------------------- | ---------------------- | ------------------------ | ----------------- | -------------------------------------- | ------------------------ | ----------------------------------------- | ---------------------- | ------------------------- | ----------------- | ----------------------------- | ---------------------------------- |

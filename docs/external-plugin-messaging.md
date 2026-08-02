@@ -1,76 +1,101 @@
-# External Plugin Messaging
+# External plugin messaging
 
-Other Plugin Hub plugins can publish a `PluginMessage` via `EventBus#post` that instructs Dink to submit a webhook request.
+Another RuneLite plugin can post a `PluginMessage` through `EventBus#post` to
+ask Pigeon to deliver a webhook notification. The user remains in control:
+each enabled profile must have **External Plugin Notifications** enabled and
+applies its own screenshot and routing settings.
 
-Users must opt-into this capability via `External Plugin Requests > Enable External Plugin Notifications`.
+If the request supplies webhook URLs, those destinations are used. Otherwise,
+each accepting profile uses its external-plugin webhook override or falls back
+to its primary webhook URLs. Consequently, one request can result in a
+delivery from more than one enabled profile.
 
-Plugins can request that a screenshot is included with the notification, but users can opt-out by
-setting `External Plugin Requests > Send Image` to `Never` (default: send image only when requested by the external plugin).
+## Message identity
 
-Plugins can include urls for the webhook, otherwise Dink will utilize `External Webhook Override`
-(or `Primary Webhook URLs` if an external url override is not specified).
+Use namespace `pigeon` and message name `notify`. The legacy namespace `dink`
+is also accepted for compatibility with existing integrations, but new code
+should use `pigeon`.
 
-Below we describe the payload structure for how plugins can customize the webhook body and include a full code example to streamline implementation.
+The message's `Map<String, Object>` payload is converted to
+[`ExternalNotificationRequest`](../src/main/java/pigeon/domain/ExternalNotificationRequest.java).
 
-## Payload
-
-The `namespace` for the `PluginMessage` should be `dink` and the `name` should be `notify`.
-
-The `Map<String, Object>` that is supplied to `PluginMessage` will be converted into [`ExternalNotificationRequest`](../src/main/java/dinkplugin/domain/ExternalNotificationRequest.java).
-
-| Field            | Required | Type    | Description                                                                                                                                                                             |
-| ---------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `text`           | Y        | String  | The body text of the notification. This field supports templating (see `replacements` below) and by default `%USERNAME%` is an available replacement.                                   |
-| `sourcePlugin`   | Y        | String  | The human-facing name of the plugin submitting the webhook notification request.                                                                                                        |
-| `urls`           | N        | List    | A list of `okhttp3.HttpUrl`s that the notification should be sent to.                                                                                                                   |
-| `title`          | N        | String  | The title for the Discord embed.                                                                                                                                                        |
-| `thumbnail`      | N        | String  | A URL to an image for the thumbnail icon of the Discord embed.                                                                                                                          |
-| `imageRequested` | N        | boolean | Whether dink should include a screenshot with the notification.                                                                                                                         |
-| `fields`         | N        | List    | A list of [embed fields](https://discord.com/developers/docs/resources/message#embed-object-embed-field-structure). The contained objects should have `name` and `value` properties.    |
-| `replacements`   | N        | Map     | A map of strings to be replaced to objects containing `value` (and optionally `richValue`) that indicate what the template string should be replaced with for plain text and rich text. |
-| `metadata`       | N        | Map     | A map of strings to any gson-serializable object to be included in the notification body for non-Discord consumers.                                                                     |
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `text` | Yes | String | Notification body. Supports the replacements below; `%USERNAME%` is available automatically. |
+| `sourcePlugin` | Yes | String | Human-facing name of the requesting plugin. |
+| `urls` | No | List | Destination `okhttp3.HttpUrl` values. Omitting this delegates routing to each profile. |
+| `title` | No | String | Discord embed title. |
+| `thumbnail` | No | String | URL for the Discord embed thumbnail. |
+| `imageRequested` | No | boolean | Requests a screenshot. Each profile's screenshot policy still applies. |
+| `fields` | No | List | Discord embed-field objects containing `name` and `value`, with optional `inline`. |
+| `replacements` | No | Map | Template tokens mapped to objects containing `value` and optional `richValue`. |
+| `metadata` | No | Map | Gson-serializable values included for non-Discord webhook consumers. |
 
 ## Example
 
-The example below assumes you already have injected RuneLite's eventbus into your plugin like so: `private @Inject EventBus eventBus;`
+The example assumes RuneLite's event bus has been injected as
+`private @Inject EventBus eventBus;`.
 
 ```java
 Map<String, Object> data = new HashMap<>();
 data.put("sourcePlugin", "My Plugin Name");
-data.put("text", "This is the primary content within the webhook. %USERNAME% will automatically be replaced with the player name and you can define your own template replacements like %XYZ%");
-data.put("replacements", Map.of("%XYZ%", createTextReplacement("sample replacement")));
-data.put("title", "An optional embed title for your notification");
+data.put("text", "A message for %USERNAME% with %XYZ%");
+data.put("replacements", Map.of(
+    "%XYZ%", createTextReplacement("sample replacement")));
+data.put("title", "Optional embed title");
 data.put("imageRequested", true);
 data.put("fields", List.of(createField("sample key", "sample value")));
 data.put("metadata", Map.of("custom key", "custom value"));
-data.put("urls", Arrays.asList(HttpUrl.parse("https://discord.com/api/webhooks/a/b"), HttpUrl.parse("https://discord.com/api/webhooks/c/d")));
 
-PluginMessage dinkRequest = new PluginMessage("dink", "notify", data);
-eventBus.post(dinkRequest);
+PluginMessage pigeonRequest = new PluginMessage("pigeon", "notify", data);
+eventBus.post(pigeonRequest);
 ```
 
-### Helper Methods
+To request explicit destinations, add `urls`:
 
 ```java
-public static Map<String, Object> createField(String name, String value) {
+data.put("urls", Arrays.asList(
+    HttpUrl.parse("https://discord.com/api/webhooks/example/one"),
+    HttpUrl.parse("https://discord.com/api/webhooks/example/two")));
+```
+
+Webhook URLs are credentials. Integrating plugins should avoid logging them
+or storing them outside RuneLite's protected configuration mechanisms.
+
+## Helper methods
+
+```java
+public static Map<String, Object> createField(String name, String value)
+{
     return Map.of("name", name, "value", value);
 }
 
-public static Map<String, Object> createField(String name, String value, boolean inline) {
+public static Map<String, Object> createField(
+    String name, String value, boolean inline)
+{
     return Map.of("name", name, "value", value, "inline", inline);
 }
-```
 
-```java
-public static Map<String, String> createTextReplacement(String text) {
+public static Map<String, String> createTextReplacement(String text)
+{
     return Map.of("value", text);
 }
 
-public static Map<String, String> createLinkReplacement(String text, String link) {
-    return Map.of("value", text, "richValue", String.format("[%s](%s)", text, link));
+public static Map<String, String> createLinkReplacement(
+    String text, String link)
+{
+    return Map.of(
+        "value", text,
+        "richValue", String.format("[%s](%s)", text, link));
 }
 
-public static Map<String, String> createWikiReplacement(String text, String searchPhrase) {
-    return createLinkReplacement(text, "https://oldschool.runescape.wiki/w/Special:Search?search=" + UrlEscapers.urlPathSegmentEscaper().escape(searchPhrase));
+public static Map<String, String> createWikiReplacement(
+    String text, String searchPhrase)
+{
+    return createLinkReplacement(
+        text,
+        "https://oldschool.runescape.wiki/w/Special:Search?search="
+            + UrlEscapers.urlPathSegmentEscaper()
+                .escape(searchPhrase));
 }
 ```

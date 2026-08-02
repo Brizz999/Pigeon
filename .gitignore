@@ -1,4 +1,5 @@
 .gradle
+.tools/
 build
 .idea/
 .project

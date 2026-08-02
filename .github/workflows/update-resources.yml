@@ -6,7 +6,6 @@ on:
 
 jobs:
   update-resources:
-    if: ${{ github.repository_owner == 'pajlads' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -33,4 +32,3 @@ jobs:
           title: "chore: update rarity data from ${{ steps.date.outputs.date }} wiki"
           commit-message: "chore: update rarity data from ${{ steps.date.outputs.date }} wiki"
           branch: automated/chore/update-resources
-          reviewers: iProdigy

@@ -1,43 +1,86 @@
-# Building and Tests
+# Testing Pigeon
 
-This RuneLite plugin uses the [Gradle](https://docs.gradle.org/current/userguide/userguide.html) build system.
+Pigeon uses Gradle, JUnit 5, and Mockito. Java 11 is the compilation target;
+JDK 21 is recommended for local development and is the JDK used for this
+project's development client.
 
-See our [build script](../build.gradle.kts) and [current gradle version](../gradle/wrapper/gradle-wrapper.properties).
+## Launch the development client
 
-## Build task
+Open the repository root as a Gradle project in IntelliJ, then run the Gradle
+`run` task. The task launches `pigeon.PigeonTest` with assertions, developer
+mode, and debug logging enabled.
 
-To compile (and test) the plugin, simply run `gradlew build`
+You can also use the checked-in **Run Pigeon** IntelliJ run configuration or
+run the Gradle task directly:
 
-At a minimum, JDK 11+ is required for compilation, but you should avoid running the game beyond Java 21 (for example, Java 22 is known to cause swing-related crashes).
+```text
+gradlew.bat run
+```
 
-If you haven't installed a [JDK](https://whichjdk.com/), we typically recommend using [Eclipse Temurin](https://adoptium.net/temurin/releases/).
+Do not run `RuneLite.java` from a separate RuneLite source checkout. Pigeon is
+an external Plugin Hub-style project and supplies its own development launcher.
 
-## Run task
+### Jagex Accounts
 
-If not using IntelliJ (or the provided run configuration does not work), you can launch the client via `gradlew run`
+RuneLite's official development workflow can write a temporary launcher
+credential that the IDE-launched client can read. Follow the current
+[Using Jagex Accounts](https://github.com/runelite/wiki/blob/master/Using-Jagex-Accounts.md)
+guide. Never share or commit `.runelite/credentials.properties`; remove it when
+development testing is finished.
 
-However, if you need a jar file to distribute to more testers, see below.
+## Automated tests
 
-## Shadow Jar task
+Run the complete suite:
 
-To create an executable JAR (with dependencies), run `gradlew shadowJar`
+```text
+gradlew.bat test
+```
 
-Note: to be able to run this jar, the "enable assertions" flag (`-ea`) must be specified.
-See our [IDE run config](../.run/Run%20Dink.run.xml) for other common parameters.
+Build all normal verification artifacts:
 
-## Test task
+```text
+gradlew.bat build
+```
 
-Dink features a comprehensive test suite using [JUnit5](https://junit.org/junit5/) and [Mockito](https://site.mockito.org/) to test individual notifiers (and their OkHttp integration).
+Test reports are written beneath `build/reports/tests/test/`.
 
-To execute these tests, run `gradlew test`
+Notifier tests normally use a mocked HTTP client. To intentionally direct a
+compatible notifier test to a private test webhook, set `TEST_WEBHOOK_URL` in
+the test process environment. Set `TEST_WEBHOOK_RICH=false` to exercise plain
+text formatting. Never use a production webhook or commit its URL.
 
-### Configuration
+## Manual release checklist
 
-In order for the test notifications to be sent to an actual webhook server,
-one can specify the environmental variable: `TEST_WEBHOOK_URL`.
+Use private test webhooks and at least two profiles.
 
-In addition, one can disable the Discord rich embed formatting of test notifications
-by setting the environmental variable `TEST_WEBHOOK_RICH` to `false`.
+- [ ] Create a profile, configure it, restart RuneLite, and confirm persistence.
+- [ ] Clone a profile and confirm the clone has an independent name and ID.
+- [ ] Delete a profile and confirm it does not return after restart.
+- [ ] Enable multiple profiles and confirm one event is independently evaluated
+      and routed for each profile.
+- [ ] Disable one profile and confirm it no longer sends.
+- [ ] Verify primary webhook routing.
+- [ ] Verify notifier-specific webhook overrides.
+- [ ] Confirm overlapping destinations produce the visible route warning.
+- [ ] Verify enabled/disabled notification rules, thresholds, templates, and
+      screenshot settings for the notifier families under test.
+- [ ] Safe-export a profile and confirm all webhook URLs are absent.
+- [ ] Export with webhooks and confirm URLs are retained only after the warning.
+- [ ] Import both export types and confirm each new profile starts disabled.
+- [ ] Reject malformed JSON, unsupported schemas, invalid URLs, and empty names.
+- [ ] Toggle **Show sidebar icon** off and on; confirm notifications remain
+      enabled while the icon is hidden.
+- [ ] Review logs and bug-report output for leaked webhook URLs.
 
-Currently, it is not possible to enable the webhook retry behavior (or configure timeouts)
-for tests without modifying [MockedNotifierTest](../src/test/java/dinkplugin/notifiers/MockedNotifierTest.java).
+## Executable development JAR
+
+`shadowJar` creates a development-only executable JAR containing test runtime
+dependencies:
+
+```text
+gradlew.bat shadowJar
+```
+
+It must be launched with assertions enabled (`-ea`). This artifact is for local
+testing, not Plugin Hub distribution; Plugin Hub builds the standard plugin
+artifact from source.

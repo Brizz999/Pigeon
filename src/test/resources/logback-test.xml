@@ -54,5 +54,5 @@
         <appender-ref ref="STDOUT"/>
         <appender-ref ref="FILE"/>
     </root>
-    <logger name="dinkplugin" level="TRACE" />
+    <logger name="pigeon" level="TRACE" />
 </configuration>

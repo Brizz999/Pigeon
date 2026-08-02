@@ -1,5 +1,26 @@
 ## Unreleased
 
+## 0.1.0 - 2026-08-02
+
+- Pigeon: Derived the project from Dink 1.14.4 with updated package names,
+  metadata, development launcher, tests, licensing attribution, and docs.
+- Pigeon: Added persistent profiles with create, configure, clone, delete,
+  enable, disable, and rename workflows.
+- Pigeon: Added concurrent evaluation and routing for multiple enabled profiles.
+- Pigeon: Added primary webhook URLs and notifier-specific overrides per
+  profile, with visible warnings for overlapping enabled routes.
+- Pigeon: Added versioned clipboard import and export. Safe export removes
+  webhook credentials by default; secret export requires an explicit warning.
+- Pigeon: Added a dedicated profile sidebar and a global setting that controls
+  only the sidebar icon's visibility.
+- Pigeon: Updated GitHub issue forms, CI artifacts, nightly builds, and release
+  automation for the renamed project.
+- Pigeon: Replaced the remaining user-visible Dink branding while retaining
+  compatibility identifiers required by existing integrations.
+
+The entries below this section are the preserved Dink history from which
+Pigeon was derived.
+
 ## 1.14.4
 
 - Bugfix: Allow Mortimer slayer task completions to trigger notifications. (#983)

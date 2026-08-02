@@ -1,5 +1,5 @@
-name: Suggestion
-description: Make a suggestion for something that you think should be added to Dink.
+name: Feature suggestion
+description: Suggest an improvement or new feature for Pigeon
 labels:
   - enhancement
 body:
@@ -7,15 +7,10 @@ body:
     id: acknowledgments
     attributes:
       label: Checklist
-      description: null
       options:
-        - label: I've searched the [issues and pull
-            requests](https://github.com/pajlads/Dinkplugin/issues?q=) for
-            similar looking suggestions.
+        - label: I've searched the existing issues and pull requests for a similar suggestion.
           required: true
-        - label: I've checked the `Unreleased` section of the
-            [changelog](https://github.com/pajlads/DinkPlugin/blob/master/CHANGELOG.md)
-            for newly added features that sound like my suggestion.
+        - label: I've checked the `Unreleased` section of `CHANGELOG.md` for related work.
           required: true
 
   - type: textarea
@@ -23,22 +18,20 @@ body:
     validations:
       required: true
     attributes:
-      label: Describe your Suggestion
-      description: |
-        Write a brief description of your feature suggestion.
-      placeholder: |
-        Examples:
-          - Send notifications when ___ occurs
-          - Add a setting to change ___ in the ___ notifier
-          - Add additional data for ___ in the ___ notifier
+      label: Describe the suggestion
+      description: Explain the behavior or capability you would like Pigeon to add.
+      placeholder: Send a notification when ...
 
   - type: textarea
-    id: usecase
+    id: use-case
+    validations:
+      required: true
     attributes:
-      label: Reasoning
-      description: |
-        Include any information arguing for implementing your suggestion.
-      placeholder: |
-        - I think this would be a good notifier because ___
-        - I think this setting would help with ___
-        - Sending this data would be helpful because ___
+      label: Use case
+      description: Explain who this helps and why the existing behavior is insufficient.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe any workarounds or alternative designs you considered.

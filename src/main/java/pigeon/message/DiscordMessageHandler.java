@@ -1,0 +1,492 @@
+package pigeon.message;
+
+import com.google.gson.Gson;
+import pigeon.PigeonPlugin;
+import pigeon.PigeonConfig;
+import pigeon.domain.PlayerLookupService;
+import pigeon.domain.SeasonalPolicy;
+import pigeon.message.templating.Replacements;
+import pigeon.message.templating.Template;
+import pigeon.notifiers.data.NotificationData;
+import pigeon.util.ConfigProxyAuth;
+import pigeon.util.ConfigProxyServer;
+import pigeon.util.ConfigUtil;
+import pigeon.util.DiscordProfile;
+import pigeon.util.Utils;
+import pigeon.util.WorldUtils;
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
+import net.runelite.api.clan.ClanChannel;
+import net.runelite.api.clan.ClanID;
+import net.runelite.client.callback.ClientThread;
+import net.runelite.client.discord.DiscordService;
+import net.runelite.client.ui.DrawManager;
+import net.runelite.client.util.ImageCapture;
+import net.runelite.client.util.ImageUtil;
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.HttpUrl;
+import okhttp3.Interceptor;
+import okhttp3.MediaType;
+import okhttp3.MultipartBody;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.Pair;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.VisibleForTesting;
+
+import javax.imageio.ImageIO;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.awt.Image;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Singleton
+public class DiscordMessageHandler {
+
+    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
+    private static final Collection<String> NO_IMAGE_ENDPOINTS = Set.of(
+        "revolt.chat", "api.revolt.chat", "local.revolt.chat",
+        "stoat.chat", "api.stoat.chat", "local.stoat.chat",
+        "api.fluxer.app"
+    );
+
+    private final Gson gson;
+    private final Client client;
+    private final DrawManager drawManager;
+    private final OkHttpClient httpClient;
+    private final PigeonConfig config;
+    private final ScheduledExecutorService executor;
+    private final ClientThread clientThread;
+    private final DiscordService discordService;
+    private final ImageCapture imageCapture;
+
+    @Inject
+    @VisibleForTesting
+    public DiscordMessageHandler(Gson gson, Client client, DrawManager drawManager, OkHttpClient httpClient, PigeonConfig config, ScheduledExecutorService executor, ClientThread clientThread, DiscordService discordService, ImageCapture imageCapture) {
+        this.gson = gson;
+        this.client = client;
+        this.drawManager = drawManager;
+        this.config = config;
+        this.executor = executor;
+        this.clientThread = clientThread;
+        this.discordService = discordService;
+        this.imageCapture = imageCapture;
+        this.httpClient = httpClient.newBuilder()
+            .addInterceptor(chain -> {
+                Request request = chain.request().newBuilder()
+                    .header("User-Agent", PigeonPlugin.USER_AGENT)
+                    .build();
+                Interceptor.Chain updatedChain = chain
+                    .withConnectTimeout(config.networkTimeout(), TimeUnit.SECONDS)
+                    .withReadTimeout(config.networkTimeout(), TimeUnit.SECONDS);
+                // Allow longer timeout when writing a screenshot file to overcome slow internet speeds
+                if (request.body() instanceof MultipartBody && Utils.hasImage((MultipartBody) request.body())) {
+                    updatedChain = chain.withWriteTimeout(Math.max(config.imageWriteTimeout(), 0), TimeUnit.SECONDS);
+                }
+                return updatedChain.proceed(request);
+            })
+            .addInterceptor(chain -> {
+                Request request = chain.request();
+                Response response = chain.proceed(request);
+                String method = request.method();
+                // http status code 307 can be useful for custom webhook handlers to redirect requests as seen in https://github.com/pajlads/DinkPlugin/issues/482
+                // however, runelite uses okhttp 3.14.9, which does not follow RFC 7231 for code 307 (or RFC 7238 for code 308).
+                // while this was fixed in okhttp 4.6.0 (released on 2020-04-28), we need this interceptor to patch this issue for now
+                if (!method.equals("GET") && !method.equals("HEAD")) {
+                    int code = response.code();
+                    if (code == 307 || code == 308) {
+                        String redirectUrl = response.header("Location");
+                        if (redirectUrl != null) {
+                            Request updatedRequest = request.newBuilder().url(redirectUrl).build();
+                            return chain.proceed(updatedRequest);
+                        }
+                    }
+                }
+                return response;
+            })
+            .proxySelector(new ConfigProxyServer(config))
+            .proxyAuthenticator(new ConfigProxyAuth(config))
+            .build();
+    }
+
+    public void createMessage(String webhookUrl, boolean sendImage, @NonNull NotificationBody<?> inputBody) {
+        createMessageInternal(config, webhookUrl, sendImage, inputBody);
+    }
+
+    public void createMessage(@NonNull PigeonConfig deliveryConfig, String webhookUrl, boolean sendImage,
+                              @NonNull NotificationBody<?> inputBody) {
+        createMessageInternal(deliveryConfig, webhookUrl, sendImage, inputBody);
+    }
+
+    private void createMessageInternal(PigeonConfig deliveryConfig, String webhookUrl, boolean sendImage,
+                                       NotificationBody<?> inputBody) {
+        if (StringUtils.isBlank(webhookUrl)) return;
+
+        Collection<HttpUrl> urlList = Arrays.stream(StringUtils.split(webhookUrl, '\n'))
+            .filter(StringUtils::isNotBlank)
+            .map(HttpUrl::parse)
+            .filter(Objects::nonNull)
+            .filter(url -> !"example.com".equalsIgnoreCase(url.host()))
+            .collect(Collectors.toList());
+        if (urlList.isEmpty()) return;
+
+        NotificationBody<?> mBody = enrichBody(inputBody, sendImage, deliveryConfig);
+        if (sendImage) {
+            // optionally hide chat for privacy in screenshot
+            captureScreenshot(deliveryConfig.screenshotScale() / 100.0, mBody.getScreenshotOverride(), deliveryConfig)
+                .thenApply(image ->
+                    RequestBody.create(MediaType.parse("image/" + image.getKey()), image.getValue())
+                )
+                .exceptionally(e -> {
+                    log.warn("There was an error creating bytes from captured image", e);
+                    return null;
+                })
+                .thenAccept(image -> sendToMultiple(urlList, mBody, image, deliveryConfig));
+        } else {
+            sendToMultiple(urlList, mBody, null, deliveryConfig);
+        }
+    }
+
+    private void sendToMultiple(Collection<HttpUrl> urls, NotificationBody<?> body, @Nullable RequestBody image,
+                                PigeonConfig deliveryConfig) {
+        urls.forEach(url -> {
+            RequestBody img = image == null || NO_IMAGE_ENDPOINTS.contains(url.host()) ? null : image;
+            executor.execute(() -> sendMessage(
+                url,
+                injectThreadName(url, body, false, deliveryConfig),
+                img,
+                0,
+                deliveryConfig
+            ));
+        });
+    }
+
+    private void sendMessage(HttpUrl url, NotificationBody<?> mBody, @Nullable RequestBody image, int attempt,
+                             PigeonConfig deliveryConfig) {
+        BiConsumer<NotificationBody<?>, Throwable> retry = (body, e) -> {
+            String urlString = url.toString();
+            String censoredUrl = Utils.truncate(urlString, urlString.length() / 2) +
+                (urlString.length() > 20 ? urlString.substring(urlString.length() - urlString.length() / 20) : "");
+
+            log.trace("Failed to send webhook message to {} on attempt {}", urlString, attempt, e);
+
+            if (attempt == 0) {
+                log.warn("There was an error sending the {} webhook message to {}", mBody.getType(), censoredUrl, e);
+            }
+
+            int maxRetries = deliveryConfig.maxRetries();
+            if (attempt < maxRetries) {
+                long baseDelay = deliveryConfig.baseRetryDelay();
+                if (baseDelay > 0) {
+                    long delay = baseDelay * (1L << Math.min(attempt, 16)); // exponential backoff
+                    executor.schedule(
+                        () -> sendMessage(url, body, image, attempt + 1, deliveryConfig),
+                        delay,
+                        TimeUnit.MILLISECONDS
+                    );
+                    log.debug("Scheduled webhook message for retry in {} milliseconds", delay);
+                } else {
+                    log.debug("Skipping retry attempts for failed webhook since base delay is not positive");
+                }
+            } else if (maxRetries > 0) {
+                log.warn("Exhausted retry attempts when sending the {} webhook message to {}", mBody.getType(), censoredUrl, e);
+            } else {
+                log.debug("Skipping retry attempts for failed webhook since max retries is not positive");
+            }
+        };
+
+        Request request = new Request.Builder()
+            .url(url)
+            .post(createBody(mBody, image, deliveryConfig))
+            .build();
+
+        httpClient.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NotNull Call call, @NotNull IOException e) {
+                retry.accept(mBody, e);
+            }
+
+            @Override
+            public void onResponse(@NotNull Call call, @NotNull Response response) throws IOException {
+                if (response.isSuccessful()) {
+                    log.trace("Successfully sent webhook message to {} after {} attempts", url, attempt + 1);
+
+                    if (response.body() != null) {
+                        response.close();
+                    }
+                } else {
+                    String body = response.body() != null ? response.body().string() : null;
+
+                    // Update thread_name to comply with discord forum channel specification
+                    if (response.code() == 400 && "application/json".equals(response.header("Content-Type"))) {
+                        DiscordErrorMessage error = gson.fromJson(body, DiscordErrorMessage.class);
+
+                        // "Webhooks posted to forum channels must have a thread_name or thread_id"
+                        if (error.getCode() == 220001) {
+                            retry.accept(
+                                injectThreadName(url, mBody, true, deliveryConfig),
+                                new RuntimeException(error.getMessage())
+                            );
+                            return;
+                        }
+
+                        // "Webhooks can only create threads in forum channels"
+                        if (error.getCode() == 220003) {
+                            retry.accept(mBody.withThreadName(null), new RuntimeException(error.getMessage()));
+                            return;
+                        }
+                    }
+
+                    // retry with no change to NotificationBody
+                    retry.accept(mBody, new RuntimeException(String.format("Received unsuccessful http response: %d - %s - %s", response.code(), response.message(), body)));
+                }
+            }
+        });
+    }
+
+    private NotificationBody<?> enrichBody(NotificationBody<?> mBody, boolean sendImage, PigeonConfig deliveryConfig) {
+        if (mBody.getPlayerName() == null) {
+            mBody = mBody.withPlayerName(Utils.getPlayerName(client));
+        }
+
+        if (mBody.getAccountType() == null) {
+            mBody = mBody.withAccountType(Utils.getAccountType(client));
+        }
+
+        if (mBody.getDinkAccountHash() == null) {
+            long id = client.getAccountHash();
+            if (id != -1) {
+                mBody = mBody.withDinkAccountHash(Utils.dinkHash(id));
+            }
+        }
+
+        if (deliveryConfig.seasonalPolicy() != SeasonalPolicy.REJECT && !mBody.isSeasonalWorld() && WorldUtils.isSeasonal(client)) {
+            mBody = mBody.withSeasonalWorld(true);
+        }
+
+        NotificationBody.NotificationBodyBuilder<?> builder = mBody.toBuilder();
+
+        if (deliveryConfig.includeLocation()) {
+            if (mBody.getWorld() == null) {
+                builder.world(client.getWorld());
+            }
+
+            if (mBody.getRegionId() == null) {
+                var loc = WorldUtils.getLocation(client);
+                if (loc != null) {
+                    builder.regionId(loc.getRegionID());
+                }
+            }
+        }
+
+        if (deliveryConfig.sendDiscordUser()) {
+            builder.discordUser(DiscordProfile.of(discordService.getCurrentUser()));
+        }
+
+        if (deliveryConfig.sendClanName()) {
+            ClanChannel clan = client.getClanChannel(ClanID.CLAN);
+            if (clan != null) {
+                builder.clanName(clan.getName());
+            }
+        }
+
+        if (deliveryConfig.sendGroupIronClanName()) {
+            ClanChannel gim = client.getClanChannel(ClanID.GROUP_IRONMAN);
+            if (gim != null) {
+                builder.groupIronClanName(gim.getName());
+            }
+        }
+
+        if (deliveryConfig.discordRichEmbeds()) {
+            builder.embeds(computeEmbeds(mBody, sendImage, deliveryConfig));
+        } else {
+            var prefix = mBody.isSeasonalWorld() ? "[Seasonal] " : "";
+            builder.computedDiscordContent(prefix + mBody.getText().evaluate(false));
+        }
+
+        return builder.build();
+    }
+
+    private NotificationBody<?> injectThreadName(HttpUrl url, NotificationBody<?> mBody, boolean force,
+                                                  PigeonConfig deliveryConfig) {
+        Collection<String> queryParams = url.queryParameterNames();
+        if (force || (queryParams.contains("forum") && !queryParams.contains("thread_id"))) {
+            String type = mBody.isSeasonalWorld() ? "Seasonal - " + mBody.getType().getTitle() : mBody.getType().getTitle();
+            String threadName = Template.builder()
+                .template(deliveryConfig.threadNameTemplate())
+                .replacementBoundary("%")
+                .replacement("%TYPE%", Replacements.ofText(type))
+                .replacement("%MESSAGE%", mBody.getText())
+                .replacement("%USERNAME%", Replacements.ofText(mBody.getPlayerName()))
+                .build()
+                .evaluate(false);
+            Long[] appliedTags = ConfigUtil.readDelimited(url.queryParameter("applied_tags"))
+                .map(tag -> {
+                    try {
+                        return Long.parseLong(tag);
+                    } catch (NumberFormatException ignored) {
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .toArray(Long[]::new);
+            return mBody.toBuilder()
+                .threadName(Utils.truncate(StringUtils.normalizeSpace(threadName), NotificationBody.MAX_THREAD_NAME_LENGTH))
+                .appliedTags(appliedTags)
+                .build();
+        }
+        return mBody;
+    }
+
+    private RequestBody createBody(NotificationBody<?> mBody, @Nullable RequestBody image, PigeonConfig deliveryConfig) {
+        String payload = gson.toJson(mBody);
+
+        if (image != null) {
+            String screenshotFileName = computeScreenshotName(deliveryConfig.screenshotFilenameTemplate(), mBody);
+            return new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("payload_json", payload)
+                .addFormDataPart("file", screenshotFileName, image)
+                .build();
+        }
+
+        return RequestBody.create(JSON, payload);
+    }
+
+    private static String computeScreenshotName(String template, NotificationBody<?> mBody) {
+        String screenshotFileName = mBody.getType().getScreenshot();
+        if (StringUtils.isBlank(template)) {
+            return screenshotFileName;
+        }
+
+        String evaluated = Template.builder()
+            .template(template.trim())
+            .replacementBoundary("%")
+            .replacement("%USERNAME%", Replacements.ofText(mBody.getPlayerName()))
+            .replacement("%TYPE%", Replacements.ofText(mBody.getType().getTitle()))
+            .replacement("%CLAN%", Replacements.ofText(mBody.getClanName()))
+            .build()
+            .evaluate(false);
+
+        screenshotFileName = Utils.sanitize(evaluated).replaceAll("[^a-zA-Z0-9._-]+", "_");
+
+        if (!screenshotFileName.endsWith(".png")) {
+            screenshotFileName += ".png";
+        }
+
+        return screenshotFileName;
+    }
+
+    /**
+     * Captures the next frame and applies the specified rescaling
+     * while abiding by {@link Embed#MAX_IMAGE_SIZE}.
+     *
+     * @param scalePercent {@link PigeonConfig#screenshotScale()} divided by 100.0
+     * @param screenshotOverride an optional image to use instead of grabbing a frame from {@link DrawManager}
+     * @return future of the image byte array by the image format name
+     * @apiNote scalePercent should be in (0, 1]
+     * @implNote the image format is either "png" (lossless) or "jpeg" (lossy), both of which can be used in MIME type
+     */
+    private CompletableFuture<Map.Entry<String, byte[]>> captureScreenshot(double scalePercent,
+                                                                            @Nullable Image screenshotOverride,
+                                                                            PigeonConfig deliveryConfig) {
+        CompletableFuture<Image> future = new CompletableFuture<>();
+        if (screenshotOverride != null) {
+            future.complete(screenshotOverride);
+        } else {
+            Utils.captureScreenshot(client, clientThread, drawManager, imageCapture, executor, deliveryConfig, future::complete);
+        }
+        return future.thenApplyAsync(ImageUtil::bufferedImageFromImage, executor)
+            .thenApply(input -> Utils.rescale(input, scalePercent))
+            .thenApply(image -> {
+                try {
+                    String format = "png"; // lossless
+                    return Pair.of(format, Utils.convertImageToByteArray(image, format));
+                } catch (IOException e) {
+                    throw new CompletionException("Could not convert image to byte array", e);
+                }
+            })
+            .thenApply(pair -> {
+                byte[] bytes = pair.getValue();
+                int n = bytes.length;
+                if (n <= Embed.MAX_IMAGE_SIZE)
+                    return pair; // already compliant; no further rescale necessary
+
+                // calculate scale factor to comply with MAX_IMAGE_SIZE
+                double factor = Math.sqrt(1.0 * Embed.MAX_IMAGE_SIZE / n);
+
+                // bytes => original image => rescaled image => updated bytes
+                try (InputStream is = new ByteArrayInputStream(bytes)) {
+                    String format = "jpeg"; // lossy
+                    BufferedImage rescaled = Utils.rescale(ImageIO.read(is), factor);
+                    return Pair.of(format, Utils.convertImageToByteArray(rescaled, format));
+                } catch (Exception e) {
+                    throw new CompletionException("Failed to resize image below Discord size limit", e);
+                }
+            });
+    }
+
+    private static List<Embed> computeEmbeds(@NotNull NotificationBody<?> body, boolean screenshot, PigeonConfig config) {
+        NotificationType type = body.getType();
+        NotificationData extra = body.getExtra();
+        String footerText = body.getCustomFooter() != null ? body.getCustomFooter() : config.embedFooterText();
+        String footerIcon = config.embedFooterIcon();
+        PlayerLookupService playerLookupService = config.playerLookupService();
+
+        Author author = Author.builder()
+            .name(body.getPlayerName())
+            .url(playerLookupService.getPlayerUrl(body.getPlayerName()))
+            .iconUrl(Utils.getChatBadge(body.getAccountType(), body.isSeasonalWorld(), config))
+            .build();
+        Footer footer = StringUtils.isBlank(footerText) ? null : Footer.builder()
+            .text(Utils.truncate(footerText, Embed.MAX_FOOTER_LENGTH))
+            .iconUrl(StringUtils.isBlank(footerIcon) ? null : footerIcon)
+            .build();
+        String title = body.getCustomTitle() != null ? body.getCustomTitle() : type.getTitle();
+        String thumbnail = body.getThumbnailUrl() != null
+            ? body.getThumbnailUrl()
+            : type.getThumbnail();
+
+        List<Embed> embeds = new ArrayList<>(body.getEmbeds() != null ? body.getEmbeds().subList(0, Math.min(body.getEmbeds().size(), Embed.MAX_EMBEDS - 1)) : Collections.emptyList());
+        embeds.add(0,
+            Embed.builder()
+                .author(author)
+                .color(config.embedColor())
+                .title(Utils.truncate(body.isSeasonalWorld() ? "[Seasonal] " + title : title, Embed.MAX_TITLE_LENGTH))
+                .description(Utils.truncate(body.getText().evaluate(config.discordRichEmbeds()), Embed.MAX_DESCRIPTION_LENGTH))
+                .image(screenshot ? new Embed.UrlEmbed("attachment://" + computeScreenshotName(config.screenshotFilenameTemplate(), body)) : null)
+                .thumbnail(new Embed.UrlEmbed(thumbnail))
+                .fields(extra != null ? extra.getFields() : Collections.emptyList())
+                .footer(footer)
+                .timestamp(footer != null ? Instant.now() : null)
+                .build()
+        );
+        return embeds;
+    }
+
+}

@@ -43,8 +43,8 @@ dependencies {
     }
 }
 
-group = "dinkplugin"
-version = "1.14.4"
+group = "pigeon"
+version = "0.1.0"
 
 tasks.withType<JavaCompile> {
     options.encoding = "UTF-8"
@@ -70,7 +70,7 @@ tasks.withType<AbstractArchiveTask>().configureEach {
     isReproducibleFileOrder = true
 }
 
-val pluginMainClass = "dinkplugin.DinkTest"
+val pluginMainClass = "pigeon.PigeonTest"
 
 tasks.register(name = "run", type = JavaExec::class) {
     classpath = sourceSets.test.get().runtimeClasspath

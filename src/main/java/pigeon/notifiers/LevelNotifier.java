@@ -1,0 +1,661 @@
+package pigeon.notifiers;
+
+import com.google.common.collect.ImmutableSet;
+import pigeon.PigeonConfig;
+import pigeon.message.NotificationBody;
+import pigeon.message.NotificationType;
+import pigeon.message.templating.Replacements;
+import pigeon.message.templating.Template;
+import pigeon.message.templating.impl.JoiningReplacement;
+import pigeon.notifiers.data.LevelNotificationData;
+import pigeon.notifiers.data.XpNotificationData;
+import pigeon.profiles.PigeonProfileConfig;
+import pigeon.profiles.ProfileEligibilityService;
+import pigeon.profiles.ProfileRuntimeService;
+import pigeon.profiles.ProfileRuntimeSnapshot;
+import pigeon.util.Utils;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Experience;
+import net.runelite.api.GameState;
+import net.runelite.api.Skill;
+import net.runelite.api.WorldType;
+import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.StatChanged;
+import net.runelite.client.callback.ClientThread;
+import net.runelite.client.util.QuantityFormatter;
+import org.jetbrains.annotations.VisibleForTesting;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+
+import static net.runelite.api.Experience.MAX_REAL_LEVEL;
+
+@Slf4j
+@Singleton
+public class LevelNotifier extends BaseNotifier {
+    public static final int LEVEL_FOR_MAX_XP = Experience.MAX_VIRT_LEVEL + 1; // 127
+    static final @VisibleForTesting int INIT_GAME_TICKS = 16; // ~10s
+    private static final Set<WorldType> SPECIAL_WORLDS = EnumSet.of(WorldType.PVP_ARENA, WorldType.QUEST_SPEEDRUNNING, WorldType.BETA_WORLD, WorldType.NOSAVE_MODE, WorldType.TOURNAMENT_WORLD, WorldType.DEADMAN, WorldType.SEASONAL);
+    private static final int SKILL_COUNT = Skill.values().length;
+    private static final String COMBAT_NAME = "Combat";
+    private static final Set<String> COMBAT_COMPONENTS;
+    private final BlockingQueue<String> levelledSkills = new ArrayBlockingQueue<>(SKILL_COUNT + 1);
+    private final Set<Skill> xpReached = EnumSet.noneOf(Skill.class);
+    private final Map<String, Integer> currentLevels = new HashMap<>();
+    private final Map<Skill, Integer> currentXp = new EnumMap<>(Skill.class);
+    private final Map<String, LevelChange> profileLevelChanges = new LinkedHashMap<>();
+    private final Map<Skill, XpChange> profileXpChanges = new EnumMap<>(Skill.class);
+    private ProfileRuntimeSnapshot pendingProfileSnapshot;
+    private int ticksWaited = 0;
+    private int initTicks = 0;
+    private Set<WorldType> specialWorldType = null;
+
+    @Inject
+    private ClientThread clientThread;
+
+    @Inject
+    private ProfileRuntimeService profileRuntimeService;
+
+    @Inject
+    private ProfileEligibilityService profileEligibilityService;
+
+    @Override
+    protected String getWebhookUrl() {
+        return config.levelWebhook();
+    }
+
+    private void initLevels() {
+        for (Skill skill : Skill.values()) {
+            int xp = client.getSkillExperience(skill);
+            int level = client.getRealSkillLevel(skill); // O(1)
+            if (level >= MAX_REAL_LEVEL) {
+                level = getLevel(xp);
+            }
+            currentLevels.put(skill.getName(), level);
+            currentXp.put(skill, xp);
+        }
+        currentLevels.put(COMBAT_NAME, calculateCombatLevel());
+        this.initTicks = 0;
+        this.specialWorldType = getSpecialWorldTypes();
+        log.debug("Initialized current skill levels: {}", currentLevels);
+    }
+
+    public void reset() {
+        levelledSkills.clear();
+        profileLevelChanges.clear();
+        profileXpChanges.clear();
+        pendingProfileSnapshot = null;
+        clientThread.invoke(() -> {
+            this.initTicks = 0;
+            this.ticksWaited = 0;
+            xpReached.clear();
+            currentXp.clear();
+            currentLevels.clear();
+            this.specialWorldType = null;
+        });
+    }
+
+    public void onTick() {
+        if (this.initTicks > INIT_GAME_TICKS) {
+            initLevels();
+            return;
+        }
+
+        if (currentLevels.size() < SKILL_COUNT) {
+            this.initTicks++;
+            return;
+        }
+
+        if (levelledSkills.isEmpty() && xpReached.isEmpty()
+            && profileLevelChanges.isEmpty() && profileXpChanges.isEmpty()) {
+            return;
+        }
+
+        // We wait a couple extra ticks so we can ensure that we process all the levels of the previous tick
+        if (++this.ticksWaited > 2) {
+            this.ticksWaited = 0;
+            if (pendingProfileSnapshot != null && pendingProfileSnapshot.isProfilesConfigured()) {
+                attemptProfileNotify(pendingProfileSnapshot);
+                pendingProfileSnapshot = null;
+            // ensure legacy notifier was not disabled during ticks waited
+            } else if (isEnabled()) {
+                attemptNotify();
+            } else {
+                levelledSkills.clear();
+            }
+        }
+    }
+
+    public void onStatChanged(StatChanged statChange) {
+        this.handleLevelUp(statChange.getSkill(), statChange.getLevel(), statChange.getXp());
+    }
+
+    public void onGameStateChanged(GameStateChanged gameStateChanged) {
+        if (gameStateChanged.getGameState() == GameState.LOGIN_SCREEN) {
+            this.reset();
+        } else if (gameStateChanged.getGameState() == GameState.LOGGED_IN && !getSpecialWorldTypes().equals(this.specialWorldType)) {
+            // world switched where player may have different level profiles; re-initialize
+            this.reset();
+        }
+    }
+
+    private void handleLevelUp(Skill skill, int level, int xp) {
+        ProfileRuntimeSnapshot profiles = profileRuntimeService.snapshot();
+        boolean profileMode = profiles.isProfilesConfigured();
+        if (xp <= 0 || level <= 1 || (!profileMode && !isEnabled())) return;
+
+        Integer previousXp = currentXp.put(skill, xp);
+        if (previousXp == null) {
+            return;
+        }
+
+        String skillName = skill.getName();
+        int virtualLevel = level < MAX_REAL_LEVEL ? level : getLevel(xp); // avoid log(n) query when not needed
+        Integer previousLevel = currentLevels.put(skillName, virtualLevel);
+
+        if (previousLevel == null) {
+            this.initTicks = INIT_GAME_TICKS; // force init on next tick
+            return;
+        }
+
+        if (virtualLevel < previousLevel || xp < previousXp) {
+            // base skill level should never regress; reset notifier state
+            reset();
+            return;
+        }
+
+        if (profileMode) {
+            captureProfileChanges(skill, skillName, previousLevel, virtualLevel, previousXp, xp, level, profiles);
+            return;
+        }
+
+        // Check normal skill level up
+        final boolean enabled = config.notifyLevel();
+        checkLevelUp(enabled, skillName, previousLevel, virtualLevel);
+
+        // Check if xp milestone reached
+        int xpInterval = config.xpInterval() * 1_000_000;
+        if (enabled && xpInterval > 0 && level >= MAX_REAL_LEVEL && xp > previousXp) {
+            int remainder = xp % xpInterval;
+            if (remainder == 0 || xp - remainder > previousXp || xp >= Experience.MAX_SKILL_XP) {
+                log.debug("Observed XP milestone for {} to {}", skill, xp);
+                xpReached.add(skill);
+                this.ticksWaited = 0;
+            }
+        }
+
+        // Skip combat level checking if no level up has occurred
+        if (virtualLevel <= previousLevel) {
+            // only return if we don't need to initialize combat level for the first time
+            if (currentLevels.containsKey(COMBAT_NAME))
+                return;
+        }
+
+        // Check for combat level increase
+        if (COMBAT_COMPONENTS.contains(skillName) && currentLevels.size() >= SKILL_COUNT) {
+            int combatLevel = calculateCombatLevel();
+            Integer previousCombatLevel = currentLevels.put(COMBAT_NAME, combatLevel);
+            checkLevelUp(enabled && config.levelNotifyCombat(), COMBAT_NAME, previousCombatLevel, combatLevel);
+        }
+    }
+
+    private void captureProfileChanges(Skill skill, String skillName, int previousLevel, int virtualLevel,
+                                       int previousXp, int xp, int realLevel,
+                                       ProfileRuntimeSnapshot profiles) {
+        if (virtualLevel > previousLevel) {
+            profileLevelChanges.merge(skillName, new LevelChange(previousLevel, virtualLevel), LevelChange::merge);
+            ticksWaited = 0;
+        }
+        if (realLevel >= MAX_REAL_LEVEL && xp > previousXp) {
+            profileXpChanges.merge(skill, new XpChange(previousXp, xp), XpChange::merge);
+            ticksWaited = 0;
+        }
+
+        if (virtualLevel <= previousLevel && currentLevels.containsKey(COMBAT_NAME)) {
+            rememberProfileSnapshot(profiles);
+            return;
+        }
+        if (COMBAT_COMPONENTS.contains(skillName) && currentLevels.size() >= SKILL_COUNT) {
+            int combatLevel = calculateCombatLevel();
+            Integer previousCombatLevel = currentLevels.put(COMBAT_NAME, combatLevel);
+            if (previousCombatLevel != null && combatLevel > previousCombatLevel) {
+                profileLevelChanges.merge(COMBAT_NAME,
+                    new LevelChange(previousCombatLevel, combatLevel), LevelChange::merge);
+                ticksWaited = 0;
+            }
+        }
+        rememberProfileSnapshot(profiles);
+    }
+
+    private void rememberProfileSnapshot(ProfileRuntimeSnapshot profiles) {
+        if (pendingProfileSnapshot == null
+            && (!profileLevelChanges.isEmpty() || !profileXpChanges.isEmpty())) {
+            pendingProfileSnapshot = profiles;
+        }
+    }
+
+    private void attemptProfileNotify(ProfileRuntimeSnapshot profiles) {
+        Map<String, LevelChange> levelChanges = new LinkedHashMap<>(profileLevelChanges);
+        Map<Skill, XpChange> xpChanges = new EnumMap<>(profileXpChanges);
+        profileLevelChanges.clear();
+        profileXpChanges.clear();
+
+        NotificationBody<?> outboundLevel = null;
+        NotificationBody<?> outboundXp = null;
+        for (PigeonProfileConfig profile : profiles.getEnabledProfiles()) {
+            if (!profile.notifyLevel() || !profileEligibilityService.isEligible(profile)) {
+                continue;
+            }
+
+            List<String> selectedLevels = new ArrayList<>();
+            levelChanges.forEach((skill, change) -> {
+                if ((!COMBAT_NAME.equals(skill) || profile.levelNotifyCombat())
+                    && checkLevelInterval(profile, change.previous, change.current,
+                        COMBAT_NAME.equals(skill))) {
+                    selectedLevels.add(skill);
+                }
+            });
+            NotificationBody<?> levelBody = createLevelBody(profile, selectedLevels);
+            if (levelBody != null && deliver(profile, profile.levelWebhook(),
+                shouldSendLevelImage(profile, selectedLevels), levelBody)) {
+                if (outboundLevel == null) outboundLevel = levelBody;
+            }
+
+            List<Skill> selectedXp = new ArrayList<>();
+            int xpInterval = profile.xpInterval() * 1_000_000;
+            if (xpInterval > 0) {
+                xpChanges.forEach((skill, change) -> {
+                    int remainder = change.current % xpInterval;
+                    if (remainder == 0 || change.current - remainder > change.previous
+                        || change.current >= Experience.MAX_SKILL_XP) {
+                        selectedXp.add(skill);
+                    }
+                });
+            }
+            NotificationBody<?> xpBody = createXpBody(profile, selectedXp);
+            if (xpBody != null && deliver(profile, profile.levelWebhook(), profile.levelSendImage(), xpBody)) {
+                if (outboundXp == null) outboundXp = xpBody;
+            }
+        }
+        if (outboundLevel != null) publishPluginMessage(outboundLevel);
+        if (outboundXp != null) publishPluginMessage(outboundXp);
+    }
+
+    private void checkLevelUp(boolean configEnabled, String skill, Integer previousLevel, int currentLevel) {
+        if (previousLevel == null || currentLevel <= previousLevel) {
+            log.trace("Ignoring non-level-up for {}: {}", skill, currentLevel);
+            return;
+        }
+
+        if (!configEnabled) {
+            log.trace("Ignoring level up of {} to {} due to disabled config setting", skill, currentLevel);
+            return;
+        }
+
+        if (!checkLevelInterval(previousLevel, currentLevel, COMBAT_NAME.equals(skill))) {
+            log.trace("Ignoring level up of {} from {} to {} that does not align with config interval", skill, previousLevel, currentLevel);
+            return;
+        }
+
+        if (levelledSkills.offer(skill)) {
+            log.debug("Observed level up for {} to {}", skill, currentLevel);
+
+            // allow more accumulation of level ups into single notification
+            this.ticksWaited = 0;
+        }
+    }
+
+    private void attemptNotify() {
+        notifyLevels();
+        notifyXp();
+    }
+
+    private void notifyXp() {
+        final int n = xpReached.size();
+        if (n == 0) return;
+
+        int interval = Math.max(config.xpInterval(), 1) * 1_000_000;
+        Map<String, Integer> current = new HashMap<>(32);
+        currentXp.forEach((k, v) -> current.put(k.getName(), v));
+        List<String> milestones = new ArrayList<>(n);
+        JoiningReplacement.JoiningReplacementBuilder skillMessage = JoiningReplacement.builder().delimiter(", ");
+        for (Skill skill : xpReached) {
+            int xp = currentXp.getOrDefault(skill, 0);
+            xp -= xp % interval;
+            milestones.add(skill.getName());
+            skillMessage.component(
+                JoiningReplacement.builder()
+                    .component(Replacements.ofWiki(skill.getName()))
+                    .component(Replacements.ofText(String.format(" to %s XP", QuantityFormatter.formatNumber(xp))))
+                    .build()
+            );
+        }
+        xpReached.clear();
+
+        String totalXp = QuantityFormatter.formatNumber(client.getOverallExperience());
+        String thumbnail = n == 1 ? getSkillIcon(milestones.get(0)) : null;
+        Template fullNotification = Template.builder()
+            .template(config.levelNotifyMessage())
+            .replacementBoundary("%")
+            .replacement("%USERNAME%", Replacements.ofText(Utils.getPlayerName(client)))
+            .replacement("%SKILL%", skillMessage.build())
+            .replacement("%TOTAL_LEVEL%", Replacements.ofText(String.valueOf(client.getTotalLevel())))
+            .replacement("%TOTAL_XP%", Replacements.ofText(totalXp))
+            .build();
+
+        createMessage(config.levelSendImage(), NotificationBody.builder()
+            .text(fullNotification)
+            .extra(new XpNotificationData(current, milestones, interval))
+            .type(NotificationType.XP_MILESTONE)
+            .thumbnailUrl(thumbnail)
+            .build());
+    }
+
+    private void notifyLevels() {
+        int n = levelledSkills.size();
+        if (n == 0) return;
+
+        // Prepare level state
+        int totalLevel = client.getTotalLevel();
+        List<String> levelled = new ArrayList<>(n);
+        int count = levelledSkills.drainTo(levelled);
+        if (count == 0) return;
+
+        Map<String, Integer> lSkills = new HashMap<>(count);
+        Map<String, Integer> currentLevels = new HashMap<>(this.currentLevels);
+
+        // Build skillMessage and populate lSkills
+        JoiningReplacement.JoiningReplacementBuilder skillMessage = JoiningReplacement.builder();
+        for (int index = 0; index < count; index++) {
+            String skill = levelled.get(index);
+            if (index > 0) {
+                if (count > 2) {
+                    skillMessage.component(Replacements.ofText(","));
+                }
+                skillMessage.component(Replacements.ofText(" "));
+                if (index + 1 == count) {
+                    skillMessage.component(Replacements.ofText("and "));
+                }
+            }
+            Integer level = currentLevels.get(skill);
+            skillMessage
+                .component(Replacements.ofWiki(skill, COMBAT_NAME.equals(skill) ? "Combat level" : skill))
+                .component(Replacements.ofText(" to " + (level < LEVEL_FOR_MAX_XP ? level : "Max XP (200M)")));
+            lSkills.put(skill, level);
+        }
+
+        // Determine whether a screenshot should be included
+        boolean sendImage;
+        if (config.levelSendImage()) {
+            int imageThreshold = config.levelMinScreenshotValue();
+            sendImage = imageThreshold <= 1 || lSkills.values().stream().anyMatch(lvl -> lvl >= imageThreshold);
+        } else {
+            sendImage = false;
+        }
+
+        // Separately check for combat level increase for extra data
+        Boolean combatLevelUp = lSkills.remove(COMBAT_NAME) != null; // remove Combat from levelledSkills
+        Integer combatLevel = currentLevels.remove(COMBAT_NAME); // remove Combat from allSkills
+        if (combatLevel == null) {
+            combatLevelUp = null; // combat level was not populated, so it is unclear whether combat level increased
+            combatLevel = calculateCombatLevel(); // populate combat level for extra data
+        } else if (!config.levelNotifyCombat()) {
+            combatLevelUp = null; // if levelNotifyCombat is disabled, it is unclear whether combat level increased
+        }
+        LevelNotificationData.CombatLevel combatData = new LevelNotificationData.CombatLevel(combatLevel, combatLevelUp);
+
+        // Select relevant thumbnail url
+        String thumbnail;
+        if (count == 1) {
+            // Use skill icon if only one skill was levelled up
+            thumbnail = getSkillIcon(levelled.get(0));
+        } else if (combatLevelUp != null && combatLevelUp && count == 2) {
+            // Upon a combat level increase, use icon of the other combat-related skill that was levelled up
+            String skill = levelled.get(0);
+            if (COMBAT_NAME.equals(skill))
+                skill = levelled.get(1);
+            thumbnail = getSkillIcon(skill);
+        } else {
+            // Fall back to NotificationType#getThumbnail
+            thumbnail = null;
+        }
+
+        // Populate message template
+        Template fullNotification = Template.builder()
+            .template(config.levelNotifyMessage())
+            .replacementBoundary("%")
+            .replacement("%USERNAME%", Replacements.ofText(Utils.getPlayerName(client)))
+            .replacement("%SKILL%", skillMessage.build())
+            .replacement("%TOTAL_LEVEL%", Replacements.ofText(String.valueOf(totalLevel)))
+            .replacement("%TOTAL_XP%", Replacements.ofText(QuantityFormatter.formatNumber(client.getOverallExperience())))
+            .build();
+
+        // Fire notification
+        createMessage(sendImage, NotificationBody.builder()
+            .text(fullNotification)
+            .extra(new LevelNotificationData(lSkills, currentLevels, combatData))
+            .type(NotificationType.LEVEL)
+            .thumbnailUrl(thumbnail)
+            .build());
+    }
+
+    private NotificationBody<?> createXpBody(PigeonConfig deliveryConfig, List<Skill> selected) {
+        int n = selected.size();
+        if (n == 0) return null;
+
+        int interval = Math.max(deliveryConfig.xpInterval(), 1) * 1_000_000;
+        Map<String, Integer> current = new HashMap<>(32);
+        currentXp.forEach((k, v) -> current.put(k.getName(), v));
+        List<String> milestones = new ArrayList<>(n);
+        JoiningReplacement.JoiningReplacementBuilder skillMessage = JoiningReplacement.builder().delimiter(", ");
+        for (Skill skill : selected) {
+            int xp = currentXp.getOrDefault(skill, 0);
+            xp -= xp % interval;
+            milestones.add(skill.getName());
+            skillMessage.component(
+                JoiningReplacement.builder()
+                    .component(Replacements.ofWiki(skill.getName()))
+                    .component(Replacements.ofText(String.format(" to %s XP", QuantityFormatter.formatNumber(xp))))
+                    .build()
+            );
+        }
+
+        Template fullNotification = Template.builder()
+            .template(deliveryConfig.levelNotifyMessage())
+            .replacementBoundary("%")
+            .replacement("%USERNAME%", Replacements.ofText(Utils.getPlayerName(client)))
+            .replacement("%SKILL%", skillMessage.build())
+            .replacement("%TOTAL_LEVEL%", Replacements.ofText(String.valueOf(client.getTotalLevel())))
+            .replacement("%TOTAL_XP%", Replacements.ofText(QuantityFormatter.formatNumber(client.getOverallExperience())))
+            .build();
+
+        return NotificationBody.builder()
+            .text(fullNotification)
+            .extra(new XpNotificationData(current, milestones, interval))
+            .type(NotificationType.XP_MILESTONE)
+            .thumbnailUrl(n == 1 ? getSkillIcon(milestones.get(0)) : null)
+            .build();
+    }
+
+    private NotificationBody<?> createLevelBody(PigeonConfig deliveryConfig, List<String> levelled) {
+        int count = levelled.size();
+        if (count == 0) return null;
+
+        Map<String, Integer> selectedSkills = new HashMap<>(count);
+        Map<String, Integer> allLevels = new HashMap<>(currentLevels);
+        JoiningReplacement.JoiningReplacementBuilder skillMessage = JoiningReplacement.builder();
+        for (int index = 0; index < count; index++) {
+            String skill = levelled.get(index);
+            if (index > 0) {
+                if (count > 2) skillMessage.component(Replacements.ofText(","));
+                skillMessage.component(Replacements.ofText(" "));
+                if (index + 1 == count) skillMessage.component(Replacements.ofText("and "));
+            }
+            Integer level = allLevels.get(skill);
+            skillMessage
+                .component(Replacements.ofWiki(skill, COMBAT_NAME.equals(skill) ? "Combat level" : skill))
+                .component(Replacements.ofText(" to " + (level < LEVEL_FOR_MAX_XP ? level : "Max XP (200M)")));
+            selectedSkills.put(skill, level);
+        }
+
+        Boolean combatLevelUp = selectedSkills.remove(COMBAT_NAME) != null;
+        Integer combatLevel = allLevels.remove(COMBAT_NAME);
+        if (combatLevel == null) {
+            combatLevelUp = null;
+            combatLevel = calculateCombatLevel();
+        } else if (!deliveryConfig.levelNotifyCombat()) {
+            combatLevelUp = null;
+        }
+        LevelNotificationData.CombatLevel combatData =
+            new LevelNotificationData.CombatLevel(combatLevel, combatLevelUp);
+
+        String thumbnail;
+        if (count == 1) {
+            thumbnail = getSkillIcon(levelled.get(0));
+        } else if (Boolean.TRUE.equals(combatLevelUp) && count == 2) {
+            String skill = levelled.get(0);
+            if (COMBAT_NAME.equals(skill)) skill = levelled.get(1);
+            thumbnail = getSkillIcon(skill);
+        } else {
+            thumbnail = null;
+        }
+
+        Template fullNotification = Template.builder()
+            .template(deliveryConfig.levelNotifyMessage())
+            .replacementBoundary("%")
+            .replacement("%USERNAME%", Replacements.ofText(Utils.getPlayerName(client)))
+            .replacement("%SKILL%", skillMessage.build())
+            .replacement("%TOTAL_LEVEL%", Replacements.ofText(String.valueOf(client.getTotalLevel())))
+            .replacement("%TOTAL_XP%", Replacements.ofText(QuantityFormatter.formatNumber(client.getOverallExperience())))
+            .build();
+
+        return NotificationBody.builder()
+            .text(fullNotification)
+            .extra(new LevelNotificationData(selectedSkills, allLevels, combatData))
+            .type(NotificationType.LEVEL)
+            .thumbnailUrl(thumbnail)
+            .build();
+    }
+
+    private boolean shouldSendLevelImage(PigeonConfig deliveryConfig, List<String> selected) {
+        if (!deliveryConfig.levelSendImage()) return false;
+        int threshold = deliveryConfig.levelMinScreenshotValue();
+        return threshold <= 1 || selected.stream()
+            .map(currentLevels::get)
+            .anyMatch(level -> level != null && level >= threshold);
+    }
+
+    private boolean checkLevelInterval(int previous, int level, boolean skipVirtualCheck) {
+        return checkLevelInterval(config, previous, level, skipVirtualCheck);
+    }
+
+    private boolean checkLevelInterval(PigeonConfig deliveryConfig, int previous, int level,
+                                       boolean skipVirtualCheck) {
+        if (level < deliveryConfig.levelMinValue())
+            return false;
+
+        if (!skipVirtualCheck && level > MAX_REAL_LEVEL && !deliveryConfig.levelNotifyVirtual())
+            return false;
+
+        int interval = deliveryConfig.levelInterval();
+        if (interval <= 1 || level == MAX_REAL_LEVEL || level == LEVEL_FOR_MAX_XP)
+            return true;
+
+        int intervalOverride = deliveryConfig.levelIntervalOverride();
+        if (intervalOverride > 0 && level >= intervalOverride) {
+            return true;
+        }
+        // Check levels in (previous, current] for divisibility by interval
+        // Allows for firing notification if jumping over a level that would've notified
+        int remainder = level % interval;
+        return remainder == 0 || (level - remainder) > previous;
+    }
+
+    private static final class LevelChange {
+        private final int previous;
+        private final int current;
+
+        private LevelChange(int previous, int current) {
+            this.previous = previous;
+            this.current = current;
+        }
+
+        private LevelChange merge(LevelChange later) {
+            return new LevelChange(Math.min(previous, later.previous), Math.max(current, later.current));
+        }
+    }
+
+    private static final class XpChange {
+        private final int previous;
+        private final int current;
+
+        private XpChange(int previous, int current) {
+            this.previous = previous;
+            this.current = current;
+        }
+
+        private XpChange merge(XpChange later) {
+            return new XpChange(Math.min(previous, later.previous), Math.max(current, later.current));
+        }
+    }
+
+    private int calculateCombatLevel() {
+        return Experience.getCombatLevel(
+            getRealLevel(Skill.ATTACK),
+            getRealLevel(Skill.STRENGTH),
+            getRealLevel(Skill.DEFENCE),
+            getRealLevel(Skill.HITPOINTS),
+            getRealLevel(Skill.MAGIC),
+            getRealLevel(Skill.RANGED),
+            getRealLevel(Skill.PRAYER)
+        );
+    }
+
+    private int getRealLevel(Skill skill) {
+        Integer cachedLevel = currentLevels.get(skill.getName());
+        return cachedLevel != null
+            ? Math.min(cachedLevel, MAX_REAL_LEVEL)
+            : client.getRealSkillLevel(skill);
+    }
+
+    private int getLevel(int xp) {
+        // treat 200M XP as level 127
+        if (xp >= Experience.MAX_SKILL_XP)
+            return LEVEL_FOR_MAX_XP;
+
+        // log(n) operation to support virtual levels
+        return Experience.getLevelForXp(xp);
+    }
+
+    private Set<WorldType> getSpecialWorldTypes() {
+        var world = client.getWorldType().clone();
+        world.retainAll(SPECIAL_WORLDS); // O(1)
+        return world;
+    }
+
+    private static String getSkillIcon(String skillName) {
+        return Utils.WIKI_IMG_BASE_URL + skillName + "_icon.png";
+    }
+
+    static {
+        COMBAT_COMPONENTS = ImmutableSet.of(
+            Skill.ATTACK.getName(),
+            Skill.STRENGTH.getName(),
+            Skill.DEFENCE.getName(),
+            Skill.HITPOINTS.getName(),
+            Skill.MAGIC.getName(),
+            Skill.RANGED.getName(),
+            Skill.PRAYER.getName()
+        );
+    }
+}

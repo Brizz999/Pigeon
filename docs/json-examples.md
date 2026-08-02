@@ -1,13 +1,15 @@
-### Structure
+# Webhook JSON examples
 
-If a Dink notification does not have an image attached, the type of the request body is `application/json`. Otherwise, Dink `POST`s [multipart](https://datatracker.ietf.org/doc/html/rfc2046#section-5.1) bodies.
+## Request structure
+
+If a Pigeon notification does not have an image attached, the request body uses `application/json`. With an image attached, Pigeon sends a [multipart](https://datatracker.ietf.org/doc/html/rfc2046#section-5.1) request.
 Note: `Content-Type` headers can also contain `charset` (UTF-8).
 
 In the examples below, `content` is populated instead of `embeds` for simplicity; this would correspond to the advanced setting 'Use Rich Embeds' being disabled. Third-party integrations should rely on the `extra` object instead of `content`/`embeds`.
 
-#### Multipart Bodies
+### Multipart bodies
 
-In particular, the `Content-Type` is [`multipart/form-data`](https://datatracker.ietf.org/doc/html/rfc7578) to accomodate the below JSON and screenshots in accordance with the [Discord API specification](https://discord.com/developers/docs/reference#uploading-files).
+In particular, the `Content-Type` is [`multipart/form-data`](https://datatracker.ietf.org/doc/html/rfc7578) to accommodate the JSON and screenshots below in accordance with the [Discord API specification](https://discord.com/developers/docs/reference#uploading-files).
 
 Thus, any third-party consumer should utilize the body entity named `payload_json` to access the relevant JSON object. The optional body entity for the screenshot is named `file`, and the underlying data stream (which should not exceed 8MB) can be `image/png` or `image/jpeg` (less common).
 
@@ -24,7 +26,7 @@ For Vert.x-Web, utilize the [`formAttributes`](https://vertx.io/docs/apidocs/io/
 For Quarkus, utilize the [`@RestForm`](https://quarkus.io/guides/rest#multipart) annotation.  
 For Spring, utilize the [`@RequestPart`](https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html) annotation.
 
-### All
+## Common fields
 
 JSON sent with every notification:
 
@@ -45,8 +47,8 @@ JSON sent with every notification but only in certain circumstances:
 
 ```json5
 {
-  "clanName": "Dink QA",
-  "groupIronClanName": "Dink QA",
+  "clanName": "Pigeon QA",
+  "groupIronClanName": "Pigeon QA",
   "discordUser": {
     "id": "012345678910111213",
     "name": "Gamer",
@@ -62,7 +64,7 @@ JSON sent with every notification but only in certain circumstances:
 The `discordUser` object is only sent when Discord is open and the advanced setting `Send Discord Profile` is enabled.  
 `world` and `regionId` are only sent when the advanced setting `Include Location` is enabled (default: true).
 
-Note: The examples below omit `playerName`, `accountType`, and `dinkAccountHash` keys because they are always the same.
+Note: The examples below omit `playerName`, `accountType`, and `dinkAccountHash` because they are common to every payload. The `dinkAccountHash` wire key is retained for compatibility with existing Dink webhook consumers.
 
 ### Deaths
 
@@ -187,7 +189,7 @@ JSON for Levelups:
   "content": "%USERNAME% has levelled %SKILL%",
   "extra": {
     "levelledSkills": {
-      // These are the skills that dinked
+      // These are the skills that triggered the notification
       "Skill name": 30
     },
     "allSkills": {
@@ -256,7 +258,7 @@ JSON for Loot Notifications:
 
 The possible values for `extra.category` correspond to the [`LootRecordType`](https://github.com/runelite/api.runelite.net/blob/master/http-api/src/main/java/net/runelite/http/api/loottracker/LootRecordType.java) enum.
 
-The possible values for `extra.items[].criteria` correspond to our [`LootCriteria`](https://github.com/pajlads/DinkPlugin/blob/master/src/main/java/dinkplugin/domain/LootCriteria.java) enum.
+The possible values for `extra.items[].criteria` correspond to Pigeon's [`LootCriteria`](../src/main/java/pigeon/domain/LootCriteria.java) enum.
 
 `killCount` is only specified for NPC/EVENT loot with the base RuneLite Loot Tracker plugin enabled.
 
