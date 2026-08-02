@@ -19,17 +19,17 @@ should use `pigeon`.
 The message's `Map<String, Object>` payload is converted to
 [`ExternalNotificationRequest`](../src/main/java/pigeon/domain/ExternalNotificationRequest.java).
 
-| Field | Required | Type | Description |
-| --- | --- | --- | --- |
-| `text` | Yes | String | Notification body. Supports the replacements below; `%USERNAME%` is available automatically. |
-| `sourcePlugin` | Yes | String | Human-facing name of the requesting plugin. |
-| `urls` | No | List | Destination `okhttp3.HttpUrl` values. Omitting this delegates routing to each profile. |
-| `title` | No | String | Discord embed title. |
-| `thumbnail` | No | String | URL for the Discord embed thumbnail. |
-| `imageRequested` | No | boolean | Requests a screenshot. Each profile's screenshot policy still applies. |
-| `fields` | No | List | Discord embed-field objects containing `name` and `value`, with optional `inline`. |
-| `replacements` | No | Map | Template tokens mapped to objects containing `value` and optional `richValue`. |
-| `metadata` | No | Map | Gson-serializable values included for non-Discord webhook consumers. |
+| Field            | Required | Type    | Description                                                                                  |
+| ---------------- | -------- | ------- | -------------------------------------------------------------------------------------------- |
+| `text`           | Yes      | String  | Notification body. Supports the replacements below; `%USERNAME%` is available automatically. |
+| `sourcePlugin`   | Yes      | String  | Human-facing name of the requesting plugin.                                                  |
+| `urls`           | No       | List    | Destination `okhttp3.HttpUrl` values. Omitting this delegates routing to each profile.       |
+| `title`          | No       | String  | Discord embed title.                                                                         |
+| `thumbnail`      | No       | String  | URL for the Discord embed thumbnail.                                                         |
+| `imageRequested` | No       | boolean | Requests a screenshot. Each profile's screenshot policy still applies.                       |
+| `fields`         | No       | List    | Discord embed-field objects containing `name` and `value`, with optional `inline`.           |
+| `replacements`   | No       | Map     | Template tokens mapped to objects containing `value` and optional `richValue`.               |
+| `metadata`       | No       | Map     | Gson-serializable values included for non-Discord webhook consumers.                         |
 
 ## Example
 
