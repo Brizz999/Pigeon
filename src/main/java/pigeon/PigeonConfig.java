@@ -267,18 +267,6 @@ public interface PigeonConfig extends Config {
     void setChatPrivacy(ChatPrivacyMode mode);
 
     @ConfigItem(
-        keyName = "sendDiscordUser",
-        name = "Send Discord Profile",
-        description = "Whether to send your discord user information to the webhook server via metadata",
-        position = 1011,
-        section = advancedSection,
-        hidden = true
-    )
-    default boolean sendDiscordUser() {
-        return true;
-    }
-
-    @ConfigItem(
         keyName = "sendClanName",
         name = "Send Clan Name",
         description = "Whether to send your clan information to the webhook server via metadata",

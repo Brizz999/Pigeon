@@ -5,7 +5,6 @@ import pigeon.PigeonConfig;
 import pigeon.domain.AccountType;
 import pigeon.message.templating.Template;
 import pigeon.notifiers.data.NotificationData;
-import pigeon.util.DiscordProfile;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.EqualsAndHashCode;
@@ -52,15 +51,6 @@ public class NotificationBody<T extends NotificationData> {
     /*
      * Discord fields
      */
-
-    /**
-     * Information about the current discord user, acquired via RPC (handled by base RuneLite).
-     * <p>
-     * This is only sent if {@link PigeonConfig#sendDiscordUser()} is enabled.
-     * While this field is not used by Discord, it can be useful for custom webhook handlers that forward to Discord.
-     */
-    @Nullable
-    DiscordProfile discordUser;
 
     /**
      * Filled in with the text of the notifier (e.g., {@link #getText()} is "Forsen has levelled Attack to 100")

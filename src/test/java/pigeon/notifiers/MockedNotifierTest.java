@@ -34,7 +34,6 @@ import net.runelite.client.callback.ClientThread;
 import net.runelite.client.chat.ChatMessageManager;
 import net.runelite.client.config.ConfigDescriptor;
 import net.runelite.client.config.ConfigManager;
-import net.runelite.client.discord.DiscordService;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.NPCManager;
 import net.runelite.client.ui.DrawManager;
@@ -92,9 +91,6 @@ abstract class MockedNotifierTest extends MockedTestBase {
     protected ScheduledExecutorService executor = new BlockingExecutor();
 
     @Bind
-    protected DiscordService discordService = Mockito.mock(DiscordService.class);
-
-    @Bind
     protected ChatMessageManager chatManager = Mockito.mock(ChatMessageManager.class);
 
     @Bind
@@ -119,7 +115,7 @@ abstract class MockedNotifierTest extends MockedTestBase {
     protected SettingsManager settingsManager = Mockito.spy(new SettingsManager(gson, client, clientThread, plugin, config, configManager, httpClient));
 
     @Bind
-    protected DiscordMessageHandler messageHandler = Mockito.spy(new DiscordMessageHandler(gson, client, drawManager, httpClient, config, executor, clientThread, discordService, imageCapture));
+    protected DiscordMessageHandler messageHandler = Mockito.spy(new DiscordMessageHandler(gson, client, drawManager, httpClient, config, executor, clientThread, imageCapture));
 
     @Override
     protected void setUp() {

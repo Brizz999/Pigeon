@@ -830,11 +830,6 @@ public final class PigeonProfileConfig implements PigeonConfig {
     }
 
     @Override
-    public boolean sendDiscordUser() {
-        return value("sendDiscordUser", Boolean.class, defaults.sendDiscordUser());
-    }
-
-    @Override
     public boolean sendClanName() {
         return value("sendClanName", Boolean.class, defaults.sendClanName());
     }

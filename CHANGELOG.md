@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Compliance: Remove RuneLite Discord user metadata integration for Plugin Hub eligibility.
+
 ## 0.1.0 - 2026-08-02
 
 - Pigeon: Derived the project from Dink 1.14.4 with updated package names,

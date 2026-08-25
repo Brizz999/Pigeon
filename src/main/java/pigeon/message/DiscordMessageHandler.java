@@ -11,7 +11,6 @@ import pigeon.notifiers.data.NotificationData;
 import pigeon.util.ConfigProxyAuth;
 import pigeon.util.ConfigProxyServer;
 import pigeon.util.ConfigUtil;
-import pigeon.util.DiscordProfile;
 import pigeon.util.Utils;
 import pigeon.util.WorldUtils;
 import lombok.NonNull;
@@ -20,7 +19,6 @@ import net.runelite.api.Client;
 import net.runelite.api.clan.ClanChannel;
 import net.runelite.api.clan.ClanID;
 import net.runelite.client.callback.ClientThread;
-import net.runelite.client.discord.DiscordService;
 import net.runelite.client.ui.DrawManager;
 import net.runelite.client.util.ImageCapture;
 import net.runelite.client.util.ImageUtil;
@@ -82,19 +80,17 @@ public class DiscordMessageHandler {
     private final PigeonConfig config;
     private final ScheduledExecutorService executor;
     private final ClientThread clientThread;
-    private final DiscordService discordService;
     private final ImageCapture imageCapture;
 
     @Inject
     @VisibleForTesting
-    public DiscordMessageHandler(Gson gson, Client client, DrawManager drawManager, OkHttpClient httpClient, PigeonConfig config, ScheduledExecutorService executor, ClientThread clientThread, DiscordService discordService, ImageCapture imageCapture) {
+    public DiscordMessageHandler(Gson gson, Client client, DrawManager drawManager, OkHttpClient httpClient, PigeonConfig config, ScheduledExecutorService executor, ClientThread clientThread, ImageCapture imageCapture) {
         this.gson = gson;
         this.client = client;
         this.drawManager = drawManager;
         this.config = config;
         this.executor = executor;
         this.clientThread = clientThread;
-        this.discordService = discordService;
         this.imageCapture = imageCapture;
         this.httpClient = httpClient.newBuilder()
             .addInterceptor(chain -> {
@@ -302,10 +298,6 @@ public class DiscordMessageHandler {
                     builder.regionId(loc.getRegionID());
                 }
             }
-        }
-
-        if (deliveryConfig.sendDiscordUser()) {
-            builder.discordUser(DiscordProfile.of(discordService.getCurrentUser()));
         }
 
         if (deliveryConfig.sendClanName()) {
