@@ -7,10 +7,11 @@ several Discord servers or custom webhook consumers.
 
 ## Status
 
-Pigeon is in pre-release testing. Profile management, concurrent routing,
+Pigeon 0.1.0 is in beta. Profile management, concurrent routing,
 credential-aware import and export, and notification fan-out have been
 implemented and manually exercised in the RuneLite development client. The
-project is now being prepared for broader beta testing and Plugin Hub review.
+initial development test pass is complete, and the plugin is currently under
+RuneLite Plugin Hub review.
 
 ## Features
 
