@@ -54,6 +54,8 @@ text formatting. Never use a production webhook or commit its URL.
 Use private test webhooks and at least two profiles.
 
 - [ ] Create a profile, configure it, restart RuneLite, and confirm persistence.
+- [ ] Compare frame pacing with no profiles and with several empty enabled and
+      disabled profiles; profile count alone must not cause gameplay stutter.
 - [ ] Clone a profile and confirm the clone has an independent name and ID.
 - [ ] Delete a profile and confirm it does not return after restart.
 - [ ] Enable multiple profiles and confirm one event is independently evaluated

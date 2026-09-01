@@ -16,11 +16,13 @@ import java.util.UUID;
 public class ProfileService {
     private final ProfileRepository repository;
     private final ProfileCodec codec;
+    private final ProfileRuntimeService runtimeService;
 
     @Inject
-    public ProfileService(ProfileRepository repository, ProfileCodec codec) {
+    public ProfileService(ProfileRepository repository, ProfileCodec codec, ProfileRuntimeService runtimeService) {
         this.repository = repository;
         this.codec = codec;
+        this.runtimeService = runtimeService;
     }
 
     public List<PigeonProfile> list() {
@@ -29,31 +31,27 @@ public class ProfileService {
 
     public PigeonProfile create(String name) {
         PigeonProfile profile = PigeonProfile.create(normalizeName(name));
-        repository.save(profile);
-        return profile;
+        return persist(profile);
     }
 
     public PigeonProfile cloneProfile(UUID sourceId, String name) {
         PigeonProfile source = requireProfile(sourceId);
         PigeonProfile clone = source.copyAs(normalizeName(name));
-        repository.save(clone);
-        return clone;
+        return persist(clone);
     }
 
     public PigeonProfile rename(UUID id, String name) {
         PigeonProfile updated = requireProfile(id).toBuilder()
             .name(normalizeName(name))
             .build();
-        repository.save(updated);
-        return updated;
+        return persist(updated);
     }
 
     public PigeonProfile setEnabled(UUID id, boolean enabled) {
         PigeonProfile updated = requireProfile(id).toBuilder()
             .enabled(enabled)
             .build();
-        repository.save(updated);
-        return updated;
+        return persist(updated);
     }
 
     public PigeonProfile update(PigeonProfile profile) {
@@ -62,12 +60,15 @@ public class ProfileService {
         }
         requireProfile(profile.getId());
         codec.validate(profile);
-        repository.save(profile);
-        return profile;
+        return persist(profile);
     }
 
     public boolean delete(UUID id) {
-        return repository.delete(id);
+        boolean deleted = repository.delete(id);
+        if (deleted) {
+            runtimeService.invalidate();
+        }
+        return deleted;
     }
 
     public List<ProfileRouteOverlap> findOverlappingRoutes() {
@@ -109,8 +110,13 @@ public class ProfileService {
             .id(UUID.randomUUID())
             .enabled(false)
             .build();
-        repository.save(imported);
-        return imported;
+        return persist(imported);
+    }
+
+    private PigeonProfile persist(PigeonProfile profile) {
+        repository.save(profile);
+        runtimeService.invalidate();
+        return profile;
     }
 
     private PigeonProfile requireProfile(UUID id) {

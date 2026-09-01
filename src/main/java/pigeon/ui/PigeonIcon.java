@@ -14,10 +14,19 @@ public final class PigeonIcon {
     }
 
     public static BufferedImage create() {
-        BufferedImage image = new BufferedImage(SIZE, SIZE, BufferedImage.TYPE_INT_ARGB);
+        return create(SIZE);
+    }
+
+    public static BufferedImage create(int size) {
+        if (size <= 0) {
+            throw new IllegalArgumentException("Icon size must be positive");
+        }
+
+        BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = image.createGraphics();
         try {
             graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            graphics.scale(size / (double) SIZE, size / (double) SIZE);
             graphics.setStroke(new BasicStroke(1.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 
             Path2D body = new Path2D.Double();

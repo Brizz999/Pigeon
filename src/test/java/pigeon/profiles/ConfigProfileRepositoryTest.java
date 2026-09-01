@@ -11,20 +11,27 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ConfigProfileRepositoryTest {
     private final Map<String, String> storedConfig = new HashMap<>();
+    private Gson gson;
+    private ProfileCodec codec;
     private ConfigProfileRepository repository;
 
     @BeforeEach
     void setUp() {
-        Gson gson = new Gson();
+        gson = new Gson();
         ConfigManager configManager = mock(ConfigManager.class);
 
         when(configManager.getConfiguration(anyString(), anyString()))
@@ -42,7 +49,44 @@ class ConfigProfileRepositoryTest {
             return null;
         }).when(configManager).unsetConfiguration(anyString(), anyString());
 
-        repository = new ConfigProfileRepository(configManager, gson, new ProfileCodec(gson));
+        codec = spy(new ProfileCodec(gson));
+        repository = new ConfigProfileRepository(configManager, gson, codec);
+    }
+
+    @Test
+    void freshRepositoryStartsWithoutProfiles() {
+        assertEquals(List.of(), repository.findAll());
+    }
+
+    @Test
+    void reusesDecodedProfilesUntilStoredJsonChanges() {
+        PigeonProfile profile = PigeonProfile.create("Clan");
+        String profileJson = codec.toJson(profile, true);
+        storedConfig.put(
+            key(ConfigProfileRepository.CONFIG_GROUP, ConfigProfileRepository.INDEX_KEY),
+            gson.toJson(List.of(profile.getId()))
+        );
+        storedConfig.put(
+            key(ConfigProfileRepository.CONFIG_GROUP, "profile_" + profile.getId()),
+            profileJson
+        );
+        clearInvocations(codec);
+
+        PigeonProfile first = repository.findAll().get(0);
+        PigeonProfile second = repository.findAll().get(0);
+
+        assertSame(first, second);
+        verify(codec, times(1)).fromJson(profileJson);
+
+        PigeonProfile disabled = profile.toBuilder().enabled(false).build();
+        String updatedJson = codec.toJson(disabled, true);
+        storedConfig.put(
+            key(ConfigProfileRepository.CONFIG_GROUP, "profile_" + profile.getId()),
+            updatedJson
+        );
+
+        assertFalse(repository.findAll().get(0).isEnabled());
+        verify(codec, times(1)).fromJson(updatedJson);
     }
 
     @Test

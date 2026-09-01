@@ -798,6 +798,7 @@ class KillCountNotifierTest extends MockedNotifierTest {
     }
 
     private void mockStoredProfiles(PigeonProfile... profiles) {
+        profileRuntimeService.invalidate();
         List<UUID> ids = java.util.Arrays.stream(profiles)
             .map(PigeonProfile::getId)
             .collect(java.util.stream.Collectors.toList());

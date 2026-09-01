@@ -10,7 +10,10 @@ import javax.inject.Singleton;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -24,6 +27,9 @@ public class ConfigProfileRepository implements ProfileRepository {
     private final ConfigManager configManager;
     private final Gson gson;
     private final ProfileCodec codec;
+    private final Map<UUID, CachedProfile> cachedProfiles = new HashMap<>();
+    private String cachedIndexJson;
+    private List<UUID> cachedIndex = Collections.emptyList();
 
     @Inject
     public ConfigProfileRepository(ConfigManager configManager, Gson gson, ProfileCodec codec) {
@@ -47,9 +53,19 @@ public class ConfigProfileRepository implements ProfileRepository {
             return Optional.empty();
         }
         String json = configManager.getConfiguration(CONFIG_GROUP, profileKey(id));
-        return json == null || json.trim().isEmpty()
-            ? Optional.empty()
-            : Optional.of(codec.fromJson(json));
+        if (json == null || json.trim().isEmpty()) {
+            cachedProfiles.remove(id);
+            return Optional.empty();
+        }
+
+        CachedProfile cached = cachedProfiles.get(id);
+        if (cached != null && json.equals(cached.json)) {
+            return Optional.of(cached.profile);
+        }
+
+        PigeonProfile profile = codec.fromJson(json);
+        cachedProfiles.put(id, new CachedProfile(json, profile));
+        return Optional.of(profile);
     }
 
     @Override
@@ -59,6 +75,7 @@ public class ConfigProfileRepository implements ProfileRepository {
 
         // Store a complete document before making it reachable through the index.
         configManager.setConfiguration(CONFIG_GROUP, profileKey(profile.getId()), json);
+        cachedProfiles.put(profile.getId(), new CachedProfile(json, profile));
 
         List<UUID> ids = new ArrayList<>(readIndex());
         if (!ids.contains(profile.getId())) {
@@ -77,27 +94,51 @@ public class ConfigProfileRepository implements ProfileRepository {
         // Make the document unreachable before removing its data.
         writeIndex(ids);
         configManager.unsetConfiguration(CONFIG_GROUP, profileKey(id));
+        cachedProfiles.remove(id);
         return true;
     }
 
     private List<UUID> readIndex() {
         String json = configManager.getConfiguration(CONFIG_GROUP, INDEX_KEY);
+        if (Objects.equals(json, cachedIndexJson)) {
+            return cachedIndex;
+        }
         if (json == null || json.trim().isEmpty()) {
-            return Collections.emptyList();
+            updateIndexCache(json, Collections.emptyList());
+            return cachedIndex;
         }
         try {
             List<UUID> ids = gson.fromJson(json, INDEX_TYPE);
-            return ids == null ? Collections.emptyList() : ids;
+            updateIndexCache(json, ids == null ? Collections.emptyList() : ids);
+            return cachedIndex;
         } catch (JsonParseException exception) {
             throw new ProfileValidationException("Stored profile index is malformed", exception);
         }
     }
 
     private void writeIndex(List<UUID> ids) {
-        configManager.setConfiguration(CONFIG_GROUP, INDEX_KEY, gson.toJson(ids, INDEX_TYPE));
+        String json = gson.toJson(ids, INDEX_TYPE);
+        configManager.setConfiguration(CONFIG_GROUP, INDEX_KEY, json);
+        updateIndexCache(json, ids);
+    }
+
+    private void updateIndexCache(String json, List<UUID> ids) {
+        cachedIndexJson = json;
+        cachedIndex = Collections.unmodifiableList(new ArrayList<>(ids));
+        cachedProfiles.keySet().retainAll(cachedIndex);
     }
 
     private static String profileKey(UUID id) {
         return PROFILE_KEY_PREFIX + id;
+    }
+
+    private static final class CachedProfile {
+        private final String json;
+        private final PigeonProfile profile;
+
+        private CachedProfile(String json, PigeonProfile profile) {
+            this.json = json;
+            this.profile = profile;
+        }
     }
 }

@@ -16,15 +16,21 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class ProfileServiceTest {
     private InMemoryProfileRepository repository;
+    private ProfileRuntimeService runtimeService;
     private ProfileService service;
 
     @BeforeEach
     void setUp() {
         repository = new InMemoryProfileRepository();
-        service = new ProfileService(repository, new ProfileCodec(new Gson()));
+        runtimeService = mock(ProfileRuntimeService.class);
+        service = new ProfileService(repository, new ProfileCodec(new Gson()), runtimeService);
     }
 
     @Test
@@ -75,6 +81,24 @@ class ProfileServiceTest {
         service.update(updated);
 
         assertEquals(updated, repository.findById(original.getId()).orElseThrow());
+    }
+
+    @Test
+    void invalidatesRuntimeCacheAfterSuccessfulMutations() {
+        PigeonProfile profile = service.create("Clan");
+        verify(runtimeService).invalidate();
+
+        clearInvocations(runtimeService);
+        service.setEnabled(profile.getId(), false);
+        verify(runtimeService).invalidate();
+
+        clearInvocations(runtimeService);
+        assertTrue(service.delete(profile.getId()));
+        verify(runtimeService).invalidate();
+
+        clearInvocations(runtimeService);
+        assertFalse(service.delete(profile.getId()));
+        verifyNoInteractions(runtimeService);
     }
 
     @Test

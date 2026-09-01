@@ -1,6 +1,9 @@
 ## Unreleased
 
 - Compliance: Remove RuneLite Discord user metadata integration for Plugin Hub eligibility.
+- Branding: Replace the inherited Dink Plugin Hub icon with Pigeon's sidebar artwork.
+- Tests: Confirm fresh RuneLite configuration stores begin with no Pigeon profiles.
+- Performance: Cache decoded profiles and runtime snapshots so gameplay events do not repeatedly parse profile JSON.
 
 ## 0.1.0 - 2026-08-02
 

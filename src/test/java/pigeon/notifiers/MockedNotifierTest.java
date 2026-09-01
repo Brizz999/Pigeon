@@ -1,6 +1,7 @@
 package pigeon.notifiers;
 
 import com.google.gson.Gson;
+import com.google.inject.Inject;
 import com.google.inject.testing.fieldbinder.Bind;
 import pigeon.PigeonPlugin;
 import pigeon.PigeonConfig;
@@ -12,6 +13,7 @@ import pigeon.domain.PlayerLookupService;
 import pigeon.message.DiscordMessageHandler;
 import pigeon.message.NotificationBody;
 import pigeon.message.templating.Template;
+import pigeon.profiles.ProfileRuntimeService;
 import pigeon.util.AccountTypeTracker;
 import pigeon.util.BlockingClientThread;
 import pigeon.util.BlockingExecutor;
@@ -62,6 +64,9 @@ abstract class MockedNotifierTest extends MockedTestBase {
 
     @Bind
     protected PigeonConfig config = Mockito.mock(PigeonConfig.class);
+
+    @Inject
+    protected ProfileRuntimeService profileRuntimeService;
 
     @Bind
     protected Client client = Mockito.mock(Client.class);

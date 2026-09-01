@@ -7,11 +7,10 @@ several Discord servers or custom webhook consumers.
 
 ## Status
 
-Pigeon 0.1.0 is in beta. Profile management, concurrent routing,
-credential-aware import and export, and notification fan-out have been
-implemented and manually exercised in the RuneLite development client. The
-initial development test pass is complete, and the plugin is currently under
-RuneLite Plugin Hub review.
+Pigeon is available through the RuneLite Plugin Hub. It is actively maintained
+while we work through any remaining bugs and gameplay edge cases. Please
+[open an issue](https://github.com/Brizz999/Pigeon/issues) if something behaves
+unexpectedly.
 
 ## Features
 
@@ -31,13 +30,14 @@ stateful game-event detection.
 
 ## Getting started
 
-1. Enable Pigeon and open the Pigeon icon in the RuneLite sidebar.
-2. Select **Create profile** and enter a name.
-3. Open **Configure profile**.
-4. Add one or more primary webhook URLs.
-5. Expand the notification types you want, enable them, and configure their
+1. Open RuneLite's **Plugin Hub**, find **Pigeon**, and install it.
+2. Enable Pigeon and open the Pigeon icon in the RuneLite sidebar.
+3. Select **Create profile** and enter a name.
+4. Open **Configure profile**.
+5. Add one or more primary webhook URLs.
+6. Expand the notification types you want, enable them, and configure their
    thresholds, messages, screenshots, or webhook overrides.
-6. Save the profile and ensure its checkbox is enabled.
+7. Save the profile and ensure its checkbox is enabled.
 
 The generic RuneLite configuration panel contains only **Show sidebar icon**.
 All notification and routing settings belong to profiles in the Pigeon panel.

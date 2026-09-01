@@ -178,6 +178,7 @@ public class GambleNotifierTest extends MockedNotifierTest {
     }
 
     private void mockStoredProfiles(PigeonProfile... profiles) {
+        profileRuntimeService.invalidate();
         List<UUID> ids = Arrays.stream(profiles).map(PigeonProfile::getId)
             .collect(java.util.stream.Collectors.toList());
         when(configManager.getConfiguration(ConfigProfileRepository.CONFIG_GROUP, ConfigProfileRepository.INDEX_KEY))

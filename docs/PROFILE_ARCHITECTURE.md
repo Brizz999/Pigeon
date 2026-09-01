@@ -8,10 +8,11 @@ enabled profile independently decides whether and where to send a detected
 event.
 
 RuneLite events are consumed once by shared trackers and notifiers. Pigeon
-then evaluates the resulting notification against a stable snapshot of the
-enabled profiles. Editing or enabling a profile while an event is being
-processed therefore affects the next event rather than a partially processed
-one.
+then evaluates the resulting notification against an immutable snapshot of the
+enabled profiles. Profile documents and their runtime configuration are cached
+instead of being decoded again for every gameplay event. Creating, importing,
+editing, enabling, disabling, or deleting a profile invalidates the snapshot,
+and the next read rebuilds it from the current profile data.
 
 ## Profile document
 

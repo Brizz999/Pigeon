@@ -23,6 +23,8 @@ import pigeon.notifiers.SlayerNotifier;
 import pigeon.notifiers.SpeedrunNotifier;
 import pigeon.notifiers.TradeNotifier;
 import pigeon.notifiers.LeaguesNotifier;
+import pigeon.profiles.ConfigProfileRepository;
+import pigeon.profiles.ProfileRuntimeService;
 import pigeon.ui.PigeonIcon;
 import pigeon.ui.PigeonPanel;
 import pigeon.util.AccountTypeTracker;
@@ -91,6 +93,7 @@ public class PigeonPlugin extends Plugin {
     private @Inject Injector injector;
     private @Inject AccountTypeTracker accountTracker;
     private @Inject WorldTypeTracker worldTracker;
+    private @Inject ProfileRuntimeService profileRuntimeService;
 
     private @Inject KillCountService killCountService;
 
@@ -138,6 +141,7 @@ public class PigeonPlugin extends Plugin {
     @Override
     protected void startUp() {
         log.trace("Started up Pigeon");
+        profileRuntimeService.invalidate();
         clientToolbar = injector.getInstance(ClientToolbar.class);
         pigeonPanel = injector.getInstance(PigeonPanel.class);
         navigationButton = NavigationButton.builder()
@@ -209,6 +213,11 @@ public class PigeonPlugin extends Plugin {
 
     @Subscribe
     public void onConfigChanged(ConfigChanged event) {
+        if (ConfigProfileRepository.CONFIG_GROUP.equals(event.getGroup())) {
+            profileRuntimeService.invalidate();
+            return;
+        }
+
         if (!SettingsManager.CONFIG_GROUP.equals(event.getGroup())) {
             return;
         }
@@ -406,6 +415,7 @@ public class PigeonPlugin extends Plugin {
 
     @Subscribe
     public void onProfileChanged(ProfileChanged event) {
+        profileRuntimeService.invalidate();
         versionManager.onProfileChange();
     }
 
