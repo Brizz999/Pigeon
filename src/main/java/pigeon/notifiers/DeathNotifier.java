@@ -196,21 +196,28 @@ public class DeathNotifier extends BaseNotifier {
     }
 
     public void onScript(ScriptPreFired event) {
+        if (event.getScriptId() != TOB_HUB_PORTAL_SCRIPT || event.getScriptEvent() == null) {
+            return;
+        }
+        
         ProfileRuntimeSnapshot profiles = profileRuntimeService.snapshot();
         ProfileRuntimeSnapshot exceptional = profiles.isProfilesConfigured()
             ? profilesForExceptionalDeath(profiles, ExceptionalDeath.TOB) : null;
         boolean enabled = profiles.isProfilesConfigured()
             ? !exceptional.getEnabledProfiles().isEmpty()
             : shouldNotifyExceptionalDangerousDeath(ExceptionalDeath.TOB);
-        if (event.getScriptId() == TOB_HUB_PORTAL_SCRIPT && event.getScriptEvent() != null && enabled) {
-            Object[] args = event.getScriptEvent().getArguments();
-            if (args != null && args.length > 1) {
-                Object text = args[1];
-                if (text instanceof String && ((String) text).contains(TOB_DEATH_MSG)) {
-                    // https://oldschool.runescape.wiki/w/Theatre_of_Blood#Death_within_the_Theatre
-                    if (profiles.isProfilesConfigured()) handleProfileNotify(Danger.DANGEROUS, exceptional);
-                    else handleNotify(Danger.DANGEROUS);
-                }
+
+        if (!enabled) {
+            return;
+        }
+
+        Object[] args = event.getScriptEvent().getArguments();
+        if (args != null && args.length > 1) {
+            Object text = args[1];
+            if (text instanceof String && ((String) text).contains(TOB_DEATH_MSG)) {
+                // https://oldschool.runescape.wiki/w/Theatre_of_Blood#Death_within_the_Theatre
+                if (profiles.isProfilesConfigured()) handleProfileNotify(Danger.DANGEROUS, exceptional);
+                else handleNotify(Danger.DANGEROUS);
             }
         }
     }
