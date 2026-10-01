@@ -199,7 +199,7 @@ public class DeathNotifier extends BaseNotifier {
         if (event.getScriptId() != TOB_HUB_PORTAL_SCRIPT || event.getScriptEvent() == null) {
             return;
         }
-        
+
         ProfileRuntimeSnapshot profiles = profileRuntimeService.snapshot();
         ProfileRuntimeSnapshot exceptional = profiles.isProfilesConfigured()
             ? profilesForExceptionalDeath(profiles, ExceptionalDeath.TOB) : null;
