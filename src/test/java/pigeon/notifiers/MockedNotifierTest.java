@@ -169,7 +169,7 @@ abstract class MockedNotifierTest extends MockedTestBase {
         worldTracker.init();
     }
 
-    protected void mockItem(int id, int price, String name) {
+    protected void mockItem(int id, long price, String name) {
         when(itemManager.getItemPrice(id)).thenReturn(price);
         ItemComposition item = mock(ItemComposition.class);
         when(item.getName()).thenReturn(name);

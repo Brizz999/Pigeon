@@ -80,9 +80,9 @@ public class ItemUtils {
         return getPrice(itemManager, itemId, null);
     }
 
-    private int getPrice(@NotNull ItemManager itemManager, int itemId, @Nullable ItemComposition item) {
+    private long getPrice(@NotNull ItemManager itemManager, int itemId, @Nullable ItemComposition item) {
         // GE price sourced from wiki with anti-manipulation massaging by runelite
-        int price = itemManager.getItemPrice(itemId);
+        long price = itemManager.getItemPrice(itemId);
         if (price <= 0) {
             // fallback: store price
             ItemComposition ic = item != null ? item : itemManager.getItemComposition(itemId);
@@ -131,7 +131,7 @@ public class ItemUtils {
 
     public SerializedItemStack stackFromItem(ItemManager itemManager, int id, int quantity) {
         ItemComposition composition = itemManager.getItemComposition(id);
-        int price = getPrice(itemManager, id, composition);
+        long price = getPrice(itemManager, id, composition);
         return new SerializedItemStack(id, quantity, price, String.valueOf(composition.getMembersName()));
     }
 

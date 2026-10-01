@@ -21,6 +21,8 @@ import net.runelite.api.gameval.ItemID;
 import net.runelite.client.util.QuantityFormatter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 
 import java.util.Arrays;
@@ -77,6 +79,66 @@ public class GrandExchangeNotifierTest extends MockedNotifierTest {
 
         // verify notification
         verifyNotification(1, offer, "sold", "Opal", OPAL_PRICE, 10 * 14L);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {2_147_483_647L, 2_147_483_648L, 5_000_000_000L, 2_149_631_130_647L})
+    void testBuyAboveMaxCash(long price) {
+        mockItem(ItemID.RUBY, price, "Ruby");
+        Offer offer = new Offer(1, ItemID.RUBY, 1, price, price, GrandExchangeOfferState.BOUGHT);
+
+        notifier.onOfferChange(0, offer);
+
+        verifyNotification(0, offer, "bought", "Ruby", price, null);
+    }
+
+    @Test
+    void testSellAboveMaxCashWithCappedTaxPerItem() {
+        long price = 5_000_000_000L;
+        mockItem(ItemID.RUBY, price, "Ruby");
+        Offer offer = new Offer(2, ItemID.RUBY, 2, price, price * 2, GrandExchangeOfferState.SOLD);
+
+        notifier.onOfferChange(0, offer);
+
+        verifyNotification(0, offer, "sold", "Ruby", price, 10_000_000L);
+    }
+
+    @Test
+    void testAveragePriceWhenOnlyTotalExceedsMaxCash() {
+        Offer offer = new Offer(3, ItemID.RUBY, 3, 1_100_000_000L, 3_000_000_000L,
+            GrandExchangeOfferState.BOUGHT);
+
+        notifier.onOfferChange(0, offer);
+
+        verifyNotification(0, offer, "bought", "Ruby", RUBY_PRICE, null);
+    }
+
+    @Test
+    void testUsesLargeOfferPriceWhenSpentIsUnavailable() {
+        long price = 5_000_000_000L;
+        Offer offer = new Offer(2, ItemID.RUBY, 2, price, 0, GrandExchangeOfferState.BOUGHT);
+        notifier.onOfferChange(0, offer);
+
+        ArgumentCaptor<NotificationBody> bodies = ArgumentCaptor.forClass(NotificationBody.class);
+        verify(messageHandler).createMessage(any(), anyBoolean(), bodies.capture());
+        GrandExchangeNotificationData data = (GrandExchangeNotificationData) bodies.getValue().getExtra();
+        org.junit.jupiter.api.Assertions.assertEquals(price, data.getItem().getPriceEach());
+        org.junit.jupiter.api.Assertions.assertEquals(10_000_000_000L, data.getItem().getTotalPrice());
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {1_000L, 5_000_000_000L})
+    void testSavedOfferPreventsDuplicatesForOldAndLargePrices(long price) {
+        when(config.grandExchangeProgressSpacingMinutes()).thenReturn(0);
+        Offer saved = new Offer(10, ItemID.RUBY, 20, price, price * 10, GrandExchangeOfferState.BUYING);
+        when(configManager.getRSProfileConfiguration("geoffer", "0")).thenReturn(gson.toJson(saved));
+
+        notifier.onOfferChange(0, saved);
+        verifyNoInteractions(messageHandler);
+
+        Offer changed = new Offer(11, ItemID.RUBY, 20, price, price * 11, GrandExchangeOfferState.BUYING);
+        notifier.onOfferChange(0, changed);
+        verifyNotification(0, changed, "bought", "Ruby", RUBY_PRICE, null);
     }
 
     @Test
@@ -311,8 +373,8 @@ public class GrandExchangeNotifierTest extends MockedNotifierTest {
         int quantitySold;
         int itemId;
         int totalQuantity;
-        int price;
-        int spent;
+        long price;
+        long spent;
         GrandExchangeOfferState state;
     }
 }

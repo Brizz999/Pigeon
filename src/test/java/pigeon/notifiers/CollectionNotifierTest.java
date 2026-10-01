@@ -285,7 +285,7 @@ class CollectionNotifierTest extends MockedNotifierTest {
         String item = "Seercull";
         int price = 23_000;
         when(itemSearcher.findItemId(item)).thenReturn(ItemID.DAGANOTH_CAVE_MAGIC_SHORTBOW);
-        when(itemManager.getItemPrice(ItemID.DAGANOTH_CAVE_MAGIC_SHORTBOW)).thenReturn(price);
+        when(itemManager.getItemPrice(ItemID.DAGANOTH_CAVE_MAGIC_SHORTBOW)).thenReturn((long) price);
 
         // update mocks
         when(client.getVarbitValue(VarbitID.OPTION_COLLECTION_NEW_ITEM)).thenReturn(3);
@@ -332,7 +332,7 @@ class CollectionNotifierTest extends MockedNotifierTest {
         String item = "Seercull";
         int price = 23_000;
         when(itemSearcher.findItemId(item)).thenReturn(ItemID.DAGANOTH_CAVE_MAGIC_SHORTBOW);
-        when(itemManager.getItemPrice(ItemID.DAGANOTH_CAVE_MAGIC_SHORTBOW)).thenReturn(price);
+        when(itemManager.getItemPrice(ItemID.DAGANOTH_CAVE_MAGIC_SHORTBOW)).thenReturn((long) price);
 
         // send fake message
         notifier.onChatMessage("New item added to your collection log: " + item);
@@ -380,7 +380,7 @@ class CollectionNotifierTest extends MockedNotifierTest {
         String item2 = "Seers ring";
         int price2 = 420_000;
         when(itemSearcher.findItemId(item2)).thenReturn(ItemID.SEER_RING);
-        when(itemManager.getItemPrice(ItemID.SEER_RING)).thenReturn(price2);
+        when(itemManager.getItemPrice(ItemID.SEER_RING)).thenReturn((long) price2);
 
         // send fake message
         notifier.onChatMessage("New item added to your collection log: " + item2);

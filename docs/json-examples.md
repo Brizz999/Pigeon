@@ -28,6 +28,11 @@ For Spring, utilize the [`@RequestPart`](https://docs.spring.io/spring-framework
 
 ## Common fields
 
+Item prices and Grand Exchange monetary values are JSON numbers and can exceed
+2,147,483,647 GP following Beyond Max Cash. Consumers should use 64-bit integers
+for these values, including `priceEach`, `marketPrice`, `targetPrice`, and
+`sellerTax`. Item IDs and quantities remain 32-bit integers.
+
 JSON sent with every notification:
 
 ```json5

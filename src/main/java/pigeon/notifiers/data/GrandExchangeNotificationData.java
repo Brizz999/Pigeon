@@ -57,7 +57,7 @@ public class GrandExchangeNotificationData extends NotificationData {
     int targetQuantity;
 
     /**
-     * GP corresponding to the 1 percent tax that is levied on the seller for this transaction.
+     * GP corresponding to the 2 percent tax that is levied on the seller for this transaction.
      * This field is not included when purchasing items.
      */
     @Nullable
